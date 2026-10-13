@@ -7,7 +7,14 @@ import { MAIN_OUTPUTS, OUTPUT_LABELS, SARVAM_LANGUAGES, readQuick, writeQuick, t
 import type { Catalog, ConvertRequest, Envelope, FieldSpec, Overrides } from "./types";
 
 const STORAGE_KEY = "extracta.request.v1";
-const EMPTY_REQUEST: ConvertRequest = { settings: {}, export: {}, validation: {}, envelope: {}, formats: {} };
+const EMPTY_REQUEST: ConvertRequest = {
+  settings: {},
+  export: {},
+  validation: {},
+  envelope: {},
+  tables: {},
+  formats: {},
+};
 
 interface QueueItem {
   id: string;
@@ -77,6 +84,7 @@ export default function App() {
     countChanges(request.settings) +
     countChanges(request.validation) +
     countChanges(request.envelope) +
+    countChanges(request.tables ?? {}) +
     Object.keys(request.formats).length;
 
   const addFiles = (files: FileList | null) => {
@@ -413,6 +421,22 @@ function QuickSettings({
 
       <div className="setting">
         <div className="setting-label">
+          <strong>Extract tables</strong>
+          <span className="muted small">
+            Every table as CSV and Excel, with its page, position, title and section. Works for scans too.
+          </span>
+        </div>
+        <div className="setting-control">
+          <Toggle
+            checked={quick.extractTables}
+            onChange={(extractTables) => set({ extractTables })}
+            label={quick.extractTables ? "On" : "Off"}
+          />
+        </div>
+      </div>
+
+      <div className="setting">
+        <div className="setting-label">
           <strong>Images in the output</strong>
           <span className="muted small">Include pictures, or leave a marker where they were.</span>
         </div>
@@ -440,6 +464,7 @@ const GENERAL_SECTIONS: { key: keyof Catalog["general"] & keyof ConvertRequest; 
   { key: "settings", title: "Input and limits", help: "Allowed formats, size and page limits, page range." },
   { key: "export", title: "Outputs", help: "Output formats, image handling and chunking." },
   { key: "validation", title: "Validation", help: "Checks on the converted content and structure." },
+  { key: "tables", title: "Table extraction", help: "Files and metadata for every table." },
   { key: "envelope", title: "Result envelope", help: "What the result keeps." },
 ];
 

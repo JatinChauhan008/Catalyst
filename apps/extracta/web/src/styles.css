@@ -304,3 +304,32 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .drawer-head, .drawer-body { padding-left: 16px; padding-right: 16px; }
   .drawer-tabs { margin: 12px 16px 0; }
 }
+
+/* ---------------------------------------------------------------- tables */
+.tables { display: flex; flex-direction: column; gap: 10px; }
+.tables-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tables-head h3 { margin: 0; }
+.table-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.table-item { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.table-item.table-warn { border-color: var(--warn); }
+.table-row {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: none; border-radius: 0; background: none; text-align: left;
+}
+.table-index {
+  flex: none; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700;
+}
+.table-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-detail { padding: 4px 12px 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.table-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; padding-top: 10px; }
+.table-detail dl { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.table-detail .fact { display: grid; grid-template-columns: 110px 1fr; gap: 8px; }
+.table-image { max-width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.table-preview { overflow-x: auto; }
+.table-preview table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.table-preview th, .table-preview td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.table-preview th { background: var(--surface-2); font-weight: 600; }
+@media (max-width: 760px) {
+  .table-detail-grid { grid-template-columns: 1fr; }
+}

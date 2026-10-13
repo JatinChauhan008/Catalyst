@@ -7,9 +7,11 @@ only does the recognition. Each page is rendered and sent as an image; up to
 
 Sarvam returns block-level boxes (paragraphs, headings, tables), not word or
 line boxes. A block with several text lines is split into equal-height line
-cells. This is an approximation: Docling's table-structure model works best
-with word or line cells, so table cell matching on scanned pages can be less
-precise than with a line-level OCR engine.
+cells. That is good enough for running text, but not for tables: a table row
+becomes one line as wide as the table, and Docling's table-structure model
+cannot place its words in columns. Layout analysis runs before OCR, so the
+table regions are known here. By default (`table_text="local"`) the text inside
+them is read with RapidOCR, which returns word boxes; Sarvam reads the rest.
 """
 
 from __future__ import annotations
@@ -20,17 +22,19 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal
 
-from docling_core.types.doc import BoundingBox, CoordOrigin
+import numpy
+from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel
 from docling_core.types.doc.page import BoundingRectangle, TextCell
 from pydantic import ConfigDict, Field, SecretStr
 
 from docling.datamodel.accelerator_options import AcceleratorOptions
 from docling.datamodel.base_models import Page
 from docling.datamodel.document import ConversionResult
-from docling.datamodel.pipeline_options import OcrOptions
+from docling.datamodel.pipeline_options import OcrOptions, RapidOcrOptions
 from docling.datamodel.settings import settings
 from docling.exceptions import OcrLanguageNotSupportedError
 from docling.models.base_ocr_model import BaseOcrModel
+from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel
 from docling.utils.ocr_language import OcrLanguage, OcrLanguageSupport
 from docling.utils.profiling import TimeRecorder
 from docling.utils.utils import chunkify
@@ -53,6 +57,9 @@ SARVAM_LANGUAGES: tuple[str, ...] = (
 
 # ISO 639 primary subtags that differ from Sarvam's code (Odia is `or` in ISO).
 _ISO_TO_SARVAM = {"or": "od-IN"}
+
+# Layout regions whose text is laid out in columns.
+_TABLE_LABELS = frozenset({DocItemLabel.TABLE, DocItemLabel.DOCUMENT_INDEX})
 
 
 class SarvamOcrOptions(OcrOptions):
@@ -126,6 +133,17 @@ class SarvamOcrOptions(OcrOptions):
             le=1.0,
         ),
     ] = 0.5
+    table_text: Annotated[
+        Literal["local", "sarvam"],
+        Field(
+            description=(
+                "How text inside tables is read. `local` reads table regions with "
+                "RapidOCR, which returns word boxes, so Docling can find the columns. "
+                "`sarvam` uses Sarvam's text, which is better for Indic scripts, but "
+                "Sarvam gives one box per row, so the columns are often merged."
+            )
+        ),
+    ] = "local"
     poll_interval_seconds: Annotated[
         float, Field(description="Delay between job status requests.", gt=0.0)
     ] = 2.0
@@ -165,6 +183,7 @@ class SarvamOcrModel(BaseOcrModel):
         self.options: SarvamOcrOptions
         self._language: str | None = None
         self._client: SarvamDocAiClient | None = None
+        self._table_reader: RapidOcrModel | None = None
 
         if self.enabled:
             codes = self.resolve_ocr_languages()
@@ -182,6 +201,13 @@ class SarvamOcrModel(BaseOcrModel):
                 poll_interval_seconds=self.options.poll_interval_seconds,
                 job_timeout_seconds=self.options.job_timeout_seconds,
             )
+            if self.options.table_text == "local":
+                self._table_reader = RapidOcrModel(
+                    enabled=True,
+                    artifacts_path=artifacts_path,
+                    options=RapidOcrOptions(),
+                    accelerator_options=accelerator_options,
+                )
 
     @classmethod
     def get_options_type(cls) -> type[OcrOptions]:
@@ -266,26 +292,111 @@ class SarvamOcrModel(BaseOcrModel):
     ) -> list[TextCell]:
         assert page.size is not None
         width, height = page.size.width, page.size.height
+        overlap = self.options.min_region_overlap
+        # Read the tables first: a sideways table keeps Sarvam's text instead.
+        tables, local = [], []
+        for table in self._table_regions(page, rects):
+            read = self._read_locally(page, table)
+            if read is not None:
+                tables.append(table)
+                local.append(read)
         cells: list[TextCell] = []
         for block in blocks:
             for line_text, line_box in _split_block_lines(block, width, height):
                 if not any(
-                    line_box.intersection_over_self(rect)
-                    >= self.options.min_region_overlap
-                    for rect in rects
+                    line_box.intersection_over_self(r) >= overlap for r in rects
                 ):
                     continue
-                cells.append(
-                    TextCell(
-                        index=len(cells),
-                        text=line_text,
-                        orig=line_text,
-                        from_ocr=True,
-                        confidence=block.confidence,
-                        rect=BoundingRectangle.from_bounding_box(line_box),
-                    )
-                )
+                if any(line_box.intersection_over_self(t) >= overlap for t in tables):
+                    continue  # read with word boxes below
+                cells.append(_cell(len(cells), line_text, line_box, block.confidence))
+        for read in local:
+            for text, box, confidence in read:
+                cells.append(_cell(len(cells), text, box, confidence))
         return cells
+
+    def _table_regions(self, page: Page, rects: list[BoundingBox]) -> list[BoundingBox]:
+        """Table regions of the page layout that need OCR, when they are read locally."""
+        if self._table_reader is None or page.predictions.layout is None:
+            return []
+        return [
+            cluster.bbox
+            for cluster in page.predictions.layout.clusters
+            if cluster.label in _TABLE_LABELS
+            and cluster.bbox.area() > 0
+            and any(cluster.bbox.intersection_over_self(r) >= 0.5 for r in rects)
+        ]
+
+    def _read_locally(
+        self, page: Page, region: BoundingBox
+    ) -> list[tuple[str, BoundingBox, float]] | None:
+        """Read one region with RapidOCR: one entry per detected text line.
+
+        Returns None when the text in the region runs sideways (a landscape
+        table printed on a portrait page): RapidOCR reads it as garbage, while
+        Sarvam reads it correctly.
+        """
+        assert self._table_reader is not None and page._backend is not None
+        scale = self._table_reader.scale
+        image = page._backend.get_page_image(scale=scale, cropbox=region)
+        result = self._table_reader.reader(numpy.array(image))
+        if result is None or result.boxes is None:
+            return []
+        boxes = result.boxes.tolist()
+        if _runs_sideways(boxes, result.txts):
+            _log.info(
+                "Table on page %s runs sideways; it keeps Sarvam's text.",
+                page.page_no + 1,
+            )
+            return None
+        found = []
+        for box, text, score in zip(boxes, result.txts, result.scores):
+            if not text.strip():
+                continue
+            xs, ys = [point[0] for point in box], [point[1] for point in box]
+            found.append(
+                (
+                    text,
+                    BoundingBox(
+                        l=min(xs) / scale + region.l,
+                        t=min(ys) / scale + region.t,
+                        r=max(xs) / scale + region.l,
+                        b=max(ys) / scale + region.t,
+                        coord_origin=CoordOrigin.TOPLEFT,
+                    ),
+                    float(score),
+                )
+            )
+        return found
+
+
+def _runs_sideways(boxes: list[list[list[float]]], texts: list[str]) -> bool:
+    """True when most text lines of a reading are taller than wide.
+
+    Measured on a scanned report: upright tables had no tall lines among 134
+    to 244; tables printed sideways had 89 to 99 percent tall lines.
+    """
+    tall = wide = 0
+    for box, text in zip(boxes, texts):
+        if len(text.strip()) < 3:
+            continue
+        xs, ys = [point[0] for point in box], [point[1] for point in box]
+        if max(ys) - min(ys) > 1.5 * (max(xs) - min(xs)):
+            tall += 1
+        else:
+            wide += 1
+    return tall + wide >= 5 and tall > wide
+
+
+def _cell(index: int, text: str, box: BoundingBox, confidence: float) -> TextCell:
+    return TextCell(
+        index=index,
+        text=text,
+        orig=text,
+        from_ocr=True,
+        confidence=confidence,
+        rect=BoundingRectangle.from_bounding_box(box),
+    )
 
 
 def _split_block_lines(

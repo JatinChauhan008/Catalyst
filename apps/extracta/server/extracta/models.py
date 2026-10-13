@@ -43,6 +43,26 @@ class ConvertSettings(BaseModel):
         int | None,
         Field(description="Last page to convert. Empty means the last page.", ge=1),
     ] = None
+    remove_repeated_headers: Annotated[
+        bool,
+        Field(
+            description=(
+                "Move running page headers and footers that the layout model missed "
+                "(the same words at the top or bottom of three or more pages) out of "
+                "the document body."
+            )
+        ),
+    ] = True
+    join_key_values: Annotated[
+        bool,
+        Field(
+            description=(
+                'In label/value blocks ("Type of Calamity : Drought"), join each label '
+                "with the value on the same row. Without it, Docling can list all "
+                "labels first and all values after them."
+            )
+        ),
+    ] = True
 
 
 class ExportSettings(BaseModel):
@@ -122,6 +142,56 @@ class EnvelopeSettings(BaseModel):
     ] = False
 
 
+class TableFileType(str, Enum):
+    CSV = "csv"
+    XLSX = "xlsx"
+    JSON = "json"
+
+
+class TableExtractionSettings(BaseModel):
+    """Extract every table into files, with metadata about where it comes from."""
+
+    enabled: Annotated[
+        bool,
+        Field(description="Extract all tables of the document into a table package."),
+    ] = False
+    file_types: Annotated[
+        list[TableFileType],
+        Field(
+            description=(
+                "Files in the package: one CSV per table, one Excel workbook with a "
+                "sheet per table and an index sheet, and a JSON manifest with the "
+                "metadata and cells of every table."
+            )
+        ),
+    ] = [TableFileType.CSV, TableFileType.XLSX, TableFileType.JSON]
+    include_images: Annotated[
+        bool,
+        Field(
+            description=(
+                "Save an image of each table, cut from its page, to check the "
+                "result against the original."
+            )
+        ),
+    ] = True
+    join_continued: Annotated[
+        bool,
+        Field(
+            description=(
+                "Join a table that continues on the next page (same columns, same "
+                "header or none) into one table. Off: the parts stay separate and "
+                "are linked."
+            )
+        ),
+    ] = False
+    preview_rows: Annotated[
+        int,
+        Field(
+            description="Rows of each table shown in the result envelope.", ge=0, le=50
+        ),
+    ] = 5
+
+
 class ConvertRequest(BaseModel):
     """The options of one conversion, as sparse overrides of the defaults."""
 
@@ -129,6 +199,7 @@ class ConvertRequest(BaseModel):
     export: dict[str, Any] = {}
     validation: dict[str, Any] = {}
     envelope: dict[str, Any] = {}
+    tables: dict[str, Any] = {}
     formats: dict[str, FormatConfig] = {}
 
 
@@ -144,6 +215,8 @@ class ProcessingInfo(BaseModel):
     pipeline: str | None = None
     backend: str | None = None
     ocr_engine: str | None = None
+    headers_removed: int = 0
+    key_values_joined: int = 0
     docling_version: str
     duration_seconds: float
 
@@ -178,6 +251,87 @@ class OutputItem(BaseModel):
     content: str | None = None
 
 
+class TableSource(BaseModel):
+    filename: str
+    sha256: str
+    detected_format: str | None = None
+    page_count: int
+
+
+class TableRegion(BaseModel):
+    """Where (part of) a table lies on a page."""
+
+    page: int
+    bbox: tuple[float, float, float, float] = Field(
+        description="(left, top, right, bottom) in PDF points, origin at the top-left corner."
+    )
+    bbox_normalized: tuple[float, float, float, float] = Field(
+        description="The same box as fractions (0 to 1) of the page width and height."
+    )
+    page_width: float
+    page_height: float
+    units: Literal["pt", "cell"] = Field(
+        default="pt",
+        description=(
+            "pt: PDF points (documents, images). cell: column and row positions, for "
+            "spreadsheets, where each page is one sheet."
+        ),
+    )
+
+
+class TableExtraction(BaseModel):
+    method: Literal["text_layer", "ocr", "mixed", "structured"] = Field(
+        description=(
+            "text_layer: cells from the PDF text; ocr: cells from OCR (scans, images); "
+            "mixed: some regions each way; structured: from a file with real tables "
+            "(Word, Excel, HTML, ...)."
+        )
+    )
+    ocr_engine: str | None = None
+    table_text: str | None = None
+
+
+class TableQuality(BaseModel):
+    status: Literal["ok", "warn"]
+    reasons: list[str] = []
+
+
+class TableSummary(BaseModel):
+    """One table and the metadata that says where it comes from."""
+
+    table_id: str
+    index: int = Field(description="Position of the table in the document, from 1.")
+    source: TableSource
+    page: int | None = None
+    regions: list[TableRegion] = []
+    caption: str | None = None
+    title: str | None = None
+    section: str | None = None
+    units: str | None = None
+    footnotes: list[str] = []
+    num_rows: int
+    num_cols: int
+    header_rows: int
+    empty_cells_share: float
+    extraction: TableExtraction
+    quality: TableQuality
+    continues_from: str | None = None
+    continues_to: str | None = None
+    joined_from: list[str] = []
+    files: dict[str, str] = {}
+    preview: list[list[str]] = []
+
+
+class TableRecord(TableSummary):
+    rows: list[list[str]]
+
+
+class TableManifest(BaseModel):
+    schema_version: str = "1.0"
+    source: TableSource
+    tables: list[TableRecord]
+
+
 class ErrorInfo(BaseModel):
     component: str | None = None
     module: str | None = None
@@ -196,6 +350,7 @@ class Envelope(BaseModel):
     stats: DocumentStats | None = None
     validation: ValidationReport | None = None
     outputs: list[OutputItem] = []
+    tables: list[TableSummary] = []
     bundle_url: str | None = None
     original_url: str | None = None
     errors: list[ErrorInfo] = []

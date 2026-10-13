@@ -30,6 +30,8 @@ from docling.document_converter import DocumentConverter
 from docling.exceptions import ConversionError
 from extracta.catalog import AppDefaults, Catalog, FormatConfig
 from extracta.exporter import BINARY_FORMATS, MEDIA_TYPES, export_document
+from extracta.furniture import move_repeated_furniture
+from extracta.key_values import join_key_values
 from extracta.models import (
     ConvertRequest,
     ConvertSettings,
@@ -40,6 +42,9 @@ from extracta.models import (
     OutputItem,
     ProcessingInfo,
     SourceInfo,
+    TableExtractionSettings,
+    TableSource,
+    TableSummary,
     ValidationSettings,
 )
 from extracta.options_schema import (
@@ -49,8 +54,9 @@ from extracta.options_schema import (
     warm_factories,
 )
 from extracta.presets import register_presets
-from extracta.sarvam import register_sarvam_ocr
+from extracta.sarvam import SarvamOcrOptions, register_sarvam_ocr
 from extracta.sarvam.ocr_model import SARVAM_API_KEY_ENV
+from extracta.tables import ExtractionContext, extract_tables, write_table_package
 from extracta.validation import document_stats, validate
 
 _log = logging.getLogger(__name__)
@@ -117,6 +123,9 @@ class ExtractaService:
                 f.model_dump() for f in describe_model(ValidationSettings())
             ],
             "envelope": [f.model_dump() for f in describe_model(EnvelopeSettings())],
+            "tables": [
+                f.model_dump() for f in describe_model(TableExtractionSettings())
+            ],
         }
         description["server"] = {
             "docling_version": _docling_version(),
@@ -209,6 +218,7 @@ class ExtractaService:
             export = _apply(ExportSettings(), request.export)
             checks = _apply(ValidationSettings(), request.validation)
             envelope_settings = _apply(EnvelopeSettings(), request.envelope)
+            table_settings = _apply(TableExtractionSettings(), request.tables)
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
 
@@ -233,7 +243,7 @@ class ExtractaService:
 
         images_needed = _should_generate_export_images(
             export.image_export_mode, export.to_formats
-        )
+        ) or (table_settings.enabled and table_settings.include_images)
         try:
             converter, lock = self._converter(
                 request.formats, settings.allowed_formats, images_needed
@@ -298,6 +308,13 @@ class ExtractaService:
             envelope.status = "failure"
             return envelope
 
+        if settings.remove_repeated_headers:
+            cleanup = move_repeated_furniture(result.document)
+            envelope.processing.headers_removed = cleanup.moved + cleanup.trimmed
+
+        if settings.join_key_values:
+            envelope.processing.key_values_joined = join_key_values(result.document)
+
         stem = Path(envelope.source.filename).stem or "document"
         outputs_dir = job_dir / "outputs"
         for to_format in export.to_formats:
@@ -332,6 +349,18 @@ class ExtractaService:
                 )
             )
 
+        if table_settings.enabled:
+            self._extract_tables(
+                result,
+                envelope,
+                job_dir,
+                outputs_dir,
+                data,
+                converter,
+                table_settings,
+                export,
+            )
+
         if outputs_dir.exists():
             bundle = job_dir / "bundle.zip"
             with zipfile.ZipFile(
@@ -352,6 +381,80 @@ class ExtractaService:
             else "partial_success"
         )
         return envelope
+
+    def _extract_tables(
+        self,
+        result: Any,
+        envelope: Envelope,
+        job_dir: Path,
+        outputs_dir: Path,
+        data: bytes,
+        converter: DocumentConverter,
+        settings: TableExtractionSettings,
+        export: ExportSettings,
+    ) -> None:
+        fmt = result.input.format
+        option = converter.format_to_options.get(fmt)
+        pipeline_options = option.pipeline_options if option else None
+        ocr = (
+            pipeline_options.ocr_options
+            if isinstance(pipeline_options, PdfPipelineOptions)
+            else None
+        )
+        context = ExtractionContext(
+            source=TableSource(
+                filename=envelope.source.filename,
+                sha256=envelope.source.sha256,
+                detected_format=fmt.value,
+                page_count=len(result.document.pages),
+            ),
+            is_pdf=fmt == InputFormat.PDF,
+            is_image=fmt == InputFormat.IMAGE,
+            pdf_bytes=data if fmt == InputFormat.PDF else None,
+            ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
+            table_text=ocr.table_text if isinstance(ocr, SarvamOcrOptions) else None,
+        )
+
+        def url_for(path: Path) -> str:
+            return self._file_url(envelope.job_id, path.relative_to(job_dir))
+
+        try:
+            records, items = extract_tables(result.document, context, settings)
+            package = write_table_package(
+                records,
+                items,
+                result.document,
+                outputs_dir / "tables",
+                settings,
+                url_for,
+            )
+        except Exception as exc:
+            _log.exception("Table extraction failed")
+            envelope.errors.append(
+                ErrorInfo(component="tables", message=f"{type(exc).__name__}: {exc}")
+            )
+            return
+        envelope.tables = [
+            TableSummary.model_validate(record.model_dump(exclude={"rows"}))
+            for record in records
+        ]
+        media = {
+            "tables_json": "application/json",
+            "tables_xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+        for kind, path in package.items():
+            size = path.stat().st_size
+            inline = kind == "tables_json" and size <= export.inline_max_kb * 1024
+            envelope.outputs.append(
+                OutputItem(
+                    format=kind,
+                    filename=path.name,
+                    media_type=media[kind],
+                    size_bytes=size,
+                    url=url_for(path),
+                    content=path.read_text(encoding="utf-8") if inline else None,
+                )
+            )
 
     def _processing_info(
         self,

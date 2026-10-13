@@ -79,16 +79,63 @@ regions without a usable PDF text layer are sent to OCR. Set **OCR options →
 Mode** to `full_page` to OCR whole pages. Pages are sent as images, up to 10
 pages per Sarvam job (the Sarvam limit).
 
+After conversion, running page headers and footers that the layout model
+missed (the same words at the top or bottom of three or more pages) are moved
+out of the document body. Turn it off with **Input and limits → Remove
+repeated headers**.
+
+In label/value blocks ("Type of Calamity : Drought"), each label is joined
+with the value on its row. Docling's reading order otherwise lists all labels
+first and all values after them when the OCR returns the two columns as
+separate boxes. Turn it off with **Input and limits → Join key values**.
+
 Limits that you must know:
 
 - Sarvam returns one box per block (paragraph, table, heading), not per word
-  or line. Extracta splits a block into equal-height lines. Paragraph text is
-  correct, but table cell matching on scanned pages is less precise than with
-  a line-level engine such as RapidOCR.
-- Sarvam does not document the field names and units of its boxes. The parser
-  accepts the usual forms, and `tests/test_sarvam_parser.py` lists them. Check
-  one real result before production use.
+  or line. Extracta splits a block into equal-height lines, which is correct
+  for running text. Table rows would then lose their columns, so by default
+  (`table_text = local`) the text inside table regions is read with RapidOCR,
+  which gives word boxes. Set `table_text = sarvam` for tables in Indic
+  scripts; their columns can then merge.
+- Tilted scans: Docling does not straighten pages. On a page scanned at a
+  slight angle, one table column can move by one row.
+- Each Sarvam job carries up to 10 pages (Extracta raises Docling's OCR batch
+  size to 10 when Sarvam is used).
 - Sarvam is a paid remote API. Page images leave your machine.
+
+## Table extraction
+
+Turn on **Extract tables** (main screen, or `"tables": {"enabled": true}` in
+the API options) to get every table of the document as a package. It works the
+same for normal PDFs (text layer), scanned PDFs and images (OCR), and files
+with real tables (Word, Excel, HTML, Markdown, ...).
+
+The package is in the job folder under `outputs/tables/` and in the
+"Download all" ZIP:
+
+| File | Content |
+|---|---|
+| `tables.json` | Manifest: the metadata and the cells of every table |
+| `tables.xlsx` | One sheet per table, plus an "Index" sheet with the metadata |
+| `<table_id>.csv` | One CSV per table (UTF-8 with BOM, opens in Excel) |
+| `<table_id>.png` | The table cut from its page, to check the result |
+
+The envelope lists the tables under `tables`, without the cells. Metadata of
+each table:
+
+| Field | Meaning |
+|---|---|
+| `table_id` | Stable ID: the first 12 characters of the file's SHA-256 hash, the page and the table's number on that page (`a07f5c34601b-p005-t01`). The same file always gives the same IDs. |
+| `source` | File name, SHA-256 hash, detected format, page count |
+| `page`, `regions` | Page(s) and box of each part: PDF points with the origin at the top-left corner, and as fractions of the page. For spreadsheets the page is the sheet and the box is in cells (`units: "cell"`). |
+| `title` | The short text right above the table (not a body sentence) |
+| `caption`, `footnotes` | As Docling found them |
+| `section` | The nearest heading before the table |
+| `units` | A units note found in the title, caption, header or just above ("(Rs in lakh)", "(IN MM)") |
+| `num_rows`, `num_cols`, `header_rows`, `empty_cells_share` | Shape of the table |
+| `extraction` | `text_layer`, `ocr`, `mixed` or `structured`, plus the OCR engine and the Sarvam `table_text` setting |
+| `quality` | `ok`, or `warn` with reasons (one column, mostly empty, no cells) |
+| `continues_from`, `continues_to` | Links between the parts of a table that runs over a page break. A part with its own title or a caption above it starts a new table. Set `join_continued` to join the parts into one table. |
 
 ## Options
 

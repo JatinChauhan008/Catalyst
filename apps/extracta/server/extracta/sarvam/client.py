@@ -114,6 +114,7 @@ class SarvamDocAiClient:
                 f"A Sarvam job accepts at most {MAX_PAGES_PER_JOB} pages, got {len(images)}."
             )
 
+        started = time.monotonic()
         archive = _zip_page_images(images)
         job_id = self._submit(
             archive, language=language, model=model, content_type=content_type
@@ -125,6 +126,11 @@ class SarvamDocAiClient:
             _log.warning("Sarvam job %s completed only partially.", job_id)
 
         output = self._download(job_id)
+        _log.info(
+            "Sarvam job %s: %d pages in %.1f s (%.1f s per page)",
+            job_id, len(images), time.monotonic() - started,
+            (time.monotonic() - started) / len(images),
+        )  # fmt: skip
         return parse_digitise_archive(
             output, image_sizes=[image.size for image in images]
         )

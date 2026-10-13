@@ -98,6 +98,41 @@ def test_scanned_pdf_uses_sarvam_ocr(service, fake_sarvam) -> None:
     assert submission["output_format"] == "json"
 
 
+def test_scanned_table_keeps_its_columns(service, fake_sarvam) -> None:
+    """Sarvam has no word boxes; table regions are read locally so columns survive."""
+    import io
+
+    import pypdfium2
+
+    page = pypdfium2.PdfDocument(
+        TEST_DATA / "pdf" / "sources" / "2305.03393v1-pg9.pdf"
+    )[0]
+    scan = io.BytesIO()
+    page.render(scale=2.0).to_pil().save(scan, format="PNG")
+    sarvam = {
+        "__variant__": "SarvamOcrOptions",
+        "api_key": "test-key",
+        "base_url": fake_sarvam.base_url,
+        "poll_interval_seconds": 0.05,
+    }
+    envelope = service.convert(
+        "scanned_table.png",
+        scan.getvalue(),
+        ConvertRequest.model_validate(
+            {
+                "export": {"to_formats": ["json"], "image_export_mode": "placeholder"},
+                "formats": {"image": {"pipeline_options": {"ocr_options": sarvam}}},
+            }
+        ),
+    )
+    assert envelope.status == "success", envelope.errors
+    document = json.loads(envelope.outputs[0].content)
+    columns = [table["data"]["num_cols"] for table in document["tables"]]
+    assert columns and max(columns) >= 4, columns
+    checks = {check.id: check.status for check in envelope.validation.checks}
+    assert checks["table_columns"] == "pass"
+
+
 def test_sarvam_without_api_key_fails_with_a_clear_error(service, monkeypatch) -> None:
     monkeypatch.delenv("SARVAM_API_KEY", raising=False)
     envelope = _convert(

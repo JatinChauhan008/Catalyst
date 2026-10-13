@@ -19,6 +19,7 @@ export interface Quick {
   language: string;
   scanned: boolean;
   tables: boolean;
+  extractTables: boolean;
   /** Set when PDFs use a pipeline that the simple settings do not cover. */
   pipelineNote: string | null;
 }
@@ -95,6 +96,7 @@ export function readQuick(request: ConvertRequest, catalog: Catalog): Quick {
     language: (Array.isArray(ocr.lang) ? (ocr.lang[0] as string) : undefined) ?? "en-IN",
     scanned: ocr.mode === "full_page",
     tables: options.do_table_structure !== false,
+    extractTables: request.tables?.enabled === true,
     pipelineNote:
       pipeline === "standard" ? null : `PDFs use the "${catalog.pipelines[pipeline].label}" pipeline (Advanced settings).`,
   };
@@ -121,6 +123,12 @@ export function writeQuick(request: ConvertRequest, catalog: Catalog, change: Pa
   let next = request;
   if (change.outputs) next = { ...next, export: { ...next.export, to_formats: change.outputs } };
   if (change.images) next = { ...next, export: { ...next.export, image_export_mode: change.images } };
+  if (change.extractTables !== undefined) {
+    const tables = { ...(next.tables ?? {}) };
+    if (change.extractTables) tables.enabled = true;
+    else delete tables.enabled;
+    next = { ...next, tables };
+  }
 
   if (change.engine) {
     const engine = change.engine;

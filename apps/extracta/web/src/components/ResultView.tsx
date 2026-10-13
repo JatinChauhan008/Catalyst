@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { OUTPUT_LABELS } from "../quick";
 import type { Envelope, OutputItem } from "../types";
+import { TablesSection } from "./TablesSection";
 
 export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -47,13 +48,15 @@ function OutputPreview({ output }: { output: OutputItem }) {
 
 export function ResultView({ envelope }: { envelope: Envelope }) {
   const preferred = ["html", "md", "text", "json"];
+  // The table package has its own section.
+  const documentOutputs = envelope.outputs.filter((output) => !output.format.startsWith("tables_"));
   const firstOutput =
-    preferred.map((id) => envelope.outputs.find((output) => output.format === id)).find(Boolean) ?? envelope.outputs[0];
+    preferred.map((id) => documentOutputs.find((output) => output.format === id)).find(Boolean) ?? documentOutputs[0];
   const [active, setActive] = useState(firstOutput?.format ?? "");
   const [copied, setCopied] = useState(false);
   useEffect(() => setActive(firstOutput?.format ?? ""), [envelope.job_id, firstOutput?.format]);
 
-  const output = envelope.outputs.find((item) => item.format === active);
+  const output = documentOutputs.find((item) => item.format === active);
   const problems = envelope.validation?.checks.filter((check) => check.status !== "pass") ?? [];
   const { stats, processing } = envelope;
 
@@ -85,11 +88,15 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
 
       {facts.length > 0 && <p className="facts">{facts.join(" · ")}</p>}
 
-      {envelope.outputs.length > 0 && (
+      {envelope.tables && envelope.tables.length > 0 && (
+        <TablesSection tables={envelope.tables} outputs={envelope.outputs} />
+      )}
+
+      {documentOutputs.length > 0 && (
         <div className="viewer">
           <div className="viewer-bar">
             <div className="segmented">
-              {envelope.outputs.map((item) => (
+              {documentOutputs.map((item) => (
                 <button
                   key={item.format}
                   type="button"
@@ -119,7 +126,7 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
                   Download
                 </a>
               )}
-              {envelope.bundle_url && envelope.outputs.length > 1 && (
+              {envelope.bundle_url && documentOutputs.length > 1 && (
                 <a className="btn" href={envelope.bundle_url}>
                   Download all
                 </a>

@@ -80,6 +80,7 @@ export interface Catalog {
     export: FieldSpec[];
     validation: FieldSpec[];
     envelope: FieldSpec[];
+    tables: FieldSpec[];
   };
   server: {
     docling_version: string;
@@ -103,6 +104,7 @@ export interface ConvertRequest {
   export: Overrides;
   validation: Overrides;
   envelope: Overrides;
+  tables: Overrides;
   formats: Record<string, FormatConfig>;
 }
 
@@ -119,6 +121,38 @@ export interface OutputItem {
   size_bytes: number;
   url: string;
   content: string | null;
+}
+
+export interface TableRegion {
+  page: number;
+  bbox: [number, number, number, number];
+  bbox_normalized: [number, number, number, number];
+  page_width: number;
+  page_height: number;
+  units: "pt" | "cell";
+}
+
+export interface TableSummary {
+  table_id: string;
+  index: number;
+  page: number | null;
+  regions: TableRegion[];
+  caption: string | null;
+  title: string | null;
+  section: string | null;
+  units: string | null;
+  footnotes: string[];
+  num_rows: number;
+  num_cols: number;
+  header_rows: number;
+  empty_cells_share: number;
+  extraction: { method: string; ocr_engine: string | null; table_text: string | null };
+  quality: { status: "ok" | "warn"; reasons: string[] };
+  continues_from: string | null;
+  continues_to: string | null;
+  joined_from: string[];
+  files: Record<string, string>;
+  preview: string[][];
 }
 
 export interface Envelope {
@@ -145,6 +179,7 @@ export interface Envelope {
   } | null;
   validation: { passed: boolean; checks: ValidationCheck[] } | null;
   outputs: OutputItem[];
+  tables?: TableSummary[];
   bundle_url: string | null;
   original_url: string | null;
   errors: { component: string | null; module: string | null; message: string }[];

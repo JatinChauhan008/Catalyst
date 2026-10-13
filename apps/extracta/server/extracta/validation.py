@@ -121,6 +121,29 @@ def validate(
             )
         )
 
+    # A table that should have columns but came out with one: its rows were read
+    # as single lines (for example by an OCR engine without word boxes).
+    flat_tables = [
+        table
+        for table in document.tables
+        if table.data is not None
+        and table.data.num_cols == 1
+        and table.data.num_rows >= 3
+    ]
+    if stats.tables:
+        checks.append(
+            ValidationCheck(
+                id="table_columns",
+                status="warn" if flat_tables else "pass",
+                message=(
+                    f"{len(flat_tables)} of {stats.tables} tables have only one column; "
+                    "their columns may be merged."
+                    if flat_tables
+                    else "Every table has more than one column."
+                ),
+            )
+        )
+
     limit = settings.warn_missing_headings_above_chars
     if limit is not None and stats.characters > limit:
         checks.append(
