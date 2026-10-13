@@ -30,6 +30,8 @@ from docling.document_converter import DocumentConverter
 from docling.exceptions import ConversionError
 from extracta.catalog import AppDefaults, Catalog, FormatConfig
 from extracta.exporter import BINARY_FORMATS, MEDIA_TYPES, export_document
+from extracta.furniture import move_repeated_furniture
+from extracta.key_values import join_key_values
 from extracta.models import (
     ConvertRequest,
     ConvertSettings,
@@ -297,6 +299,13 @@ class ExtractaService:
         if result.status == ConversionStatus.FAILURE:
             envelope.status = "failure"
             return envelope
+
+        if settings.remove_repeated_headers:
+            cleanup = move_repeated_furniture(result.document)
+            envelope.processing.headers_removed = cleanup.moved + cleanup.trimmed
+
+        if settings.join_key_values:
+            envelope.processing.key_values_joined = join_key_values(result.document)
 
         stem = Path(envelope.source.filename).stem or "document"
         outputs_dir = job_dir / "outputs"

@@ -79,15 +79,28 @@ regions without a usable PDF text layer are sent to OCR. Set **OCR options →
 Mode** to `full_page` to OCR whole pages. Pages are sent as images, up to 10
 pages per Sarvam job (the Sarvam limit).
 
+After conversion, running page headers and footers that the layout model
+missed (the same words at the top or bottom of three or more pages) are moved
+out of the document body. Turn it off with **Input and limits → Remove
+repeated headers**.
+
+In label/value blocks ("Type of Calamity : Drought"), each label is joined
+with the value on its row. Docling's reading order otherwise lists all labels
+first and all values after them when the OCR returns the two columns as
+separate boxes. Turn it off with **Input and limits → Join key values**.
+
 Limits that you must know:
 
 - Sarvam returns one box per block (paragraph, table, heading), not per word
-  or line. Extracta splits a block into equal-height lines. Paragraph text is
-  correct, but table cell matching on scanned pages is less precise than with
-  a line-level engine such as RapidOCR.
-- Sarvam does not document the field names and units of its boxes. The parser
-  accepts the usual forms, and `tests/test_sarvam_parser.py` lists them. Check
-  one real result before production use.
+  or line. Extracta splits a block into equal-height lines, which is correct
+  for running text. Table rows would then lose their columns, so by default
+  (`table_text = local`) the text inside table regions is read with RapidOCR,
+  which gives word boxes. Set `table_text = sarvam` for tables in Indic
+  scripts; their columns can then merge.
+- Tilted scans: Docling does not straighten pages. On a page scanned at a
+  slight angle, one table column can move by one row.
+- Each Sarvam job carries up to 10 pages (Extracta raises Docling's OCR batch
+  size to 10 when Sarvam is used).
 - Sarvam is a paid remote API. Page images leave your machine.
 
 ## Options

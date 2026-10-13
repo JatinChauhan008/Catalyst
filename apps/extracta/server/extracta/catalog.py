@@ -337,6 +337,17 @@ class Catalog:
         pipeline_options = apply_overrides(
             base_options, config.pipeline_options, f"{fmt.value}.pipeline."
         )
+        if (
+            isinstance(pipeline_options, ThreadedPdfPipelineOptions)
+            and isinstance(pipeline_options.ocr_options, SarvamOcrOptions)
+            and "ocr_batch_size" not in config.pipeline_options
+        ):
+            # The OCR stage receives this many pages at a time; let one Sarvam job
+            # carry as many pages as it may (10) instead of the default 4.
+            pipeline_options.ocr_batch_size = max(
+                pipeline_options.ocr_batch_size,
+                pipeline_options.ocr_options.pages_per_job,
+            )
 
         backend_options = None
         if config.backend_options:

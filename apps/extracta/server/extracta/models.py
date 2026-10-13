@@ -43,6 +43,26 @@ class ConvertSettings(BaseModel):
         int | None,
         Field(description="Last page to convert. Empty means the last page.", ge=1),
     ] = None
+    remove_repeated_headers: Annotated[
+        bool,
+        Field(
+            description=(
+                "Move running page headers and footers that the layout model missed "
+                "(the same words at the top or bottom of three or more pages) out of "
+                "the document body."
+            )
+        ),
+    ] = True
+    join_key_values: Annotated[
+        bool,
+        Field(
+            description=(
+                'In label/value blocks ("Type of Calamity : Drought"), join each label '
+                "with the value on the same row. Without it, Docling can list all "
+                "labels first and all values after them."
+            )
+        ),
+    ] = True
 
 
 class ExportSettings(BaseModel):
@@ -144,6 +164,8 @@ class ProcessingInfo(BaseModel):
     pipeline: str | None = None
     backend: str | None = None
     ocr_engine: str | None = None
+    headers_removed: int = 0
+    key_values_joined: int = 0
     docling_version: str
     duration_seconds: float
 
