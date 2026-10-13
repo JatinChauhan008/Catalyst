@@ -53,6 +53,7 @@ from extracta.options_schema import (
 from extracta.presets import register_presets
 from extracta.sarvam import register_sarvam_ocr
 from extracta.sarvam.ocr_model import SARVAM_API_KEY_ENV
+from extracta.upright import use_upright_backends
 from extracta.validation import document_stats, validate
 
 _log = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class ExtractaService:
         formats: dict[str, FormatConfig],
         allowed: list[InputFormat] | None,
         images_needed: bool,
+        straighten_pages: bool,
     ) -> tuple[DocumentConverter, threading.Lock]:
         unknown = set(formats) - {fmt.value for fmt in InputFormat}
         if unknown:
@@ -142,6 +144,7 @@ class ExtractaService:
                 "formats": {k: v.model_dump(mode="json") for k, v in formats.items()},
                 "allowed": [fmt.value for fmt in allowed] if allowed else None,
                 "images": images_needed,
+                "straighten": straighten_pages,
             },
             sort_keys=True,
         )
@@ -166,6 +169,8 @@ class ExtractaService:
         converter = DocumentConverter(
             allowed_formats=allowed or None, format_options=format_options
         )
+        if straighten_pages:
+            use_upright_backends(converter)
         entry = (converter, threading.Lock())
         with self._converters_lock:
             self._converters[key] = entry
@@ -238,7 +243,10 @@ class ExtractaService:
         )
         try:
             converter, lock = self._converter(
-                request.formats, settings.allowed_formats, images_needed
+                request.formats,
+                settings.allowed_formats,
+                images_needed,
+                settings.straighten_scanned_pages,
             )
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")

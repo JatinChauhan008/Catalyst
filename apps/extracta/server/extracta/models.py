@@ -43,6 +43,17 @@ class ConvertSettings(BaseModel):
         int | None,
         Field(description="Last page to convert. Empty means the last page.", ge=1),
     ] = None
+    straighten_scanned_pages: Annotated[
+        bool,
+        Field(
+            description=(
+                "Turn image-only pages (scans, image files) upright and straighten "
+                "them before layout, OCR and table analysis. Fixes tables printed "
+                "sideways and pages scanned at a slight angle. Pages with a text "
+                "layer are not changed."
+            )
+        ),
+    ] = True
     remove_repeated_headers: Annotated[
         bool,
         Field(
