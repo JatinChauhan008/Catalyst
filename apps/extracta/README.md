@@ -89,6 +89,13 @@ with the value on its row. Docling's reading order otherwise lists all labels
 first and all values after them when the OCR returns the two columns as
 separate boxes. Turn it off with **Input and limits → Join key values**.
 
+Before layout, OCR and table analysis, image-only pages (scans without a text
+layer, and image files) are turned upright and straightened. Pages with a
+landscape table printed sideways turn by 90 or 270 degrees, upside-down pages
+by 180 degrees, and pages scanned at an angle of up to 5 degrees rotate back.
+The stored page (size and images) is the corrected page, so all boxes match
+it. Turn it off with **Input and limits → Straighten scanned pages**.
+
 Limits that you must know:
 
 - Sarvam returns one box per block (paragraph, table, heading), not per word
@@ -97,8 +104,18 @@ Limits that you must know:
   (`table_text = local`) the text inside table regions is read with RapidOCR,
   which gives word boxes. Set `table_text = sarvam` for tables in Indic
   scripts; their columns can then merge.
-- Tilted scans: Docling does not straighten pages. On a page scanned at a
-  slight angle, one table column can move by one row.
+- Straightening applies only to image-only pages. A scan with a text layer
+  (a "searchable" PDF) is used as it is, because its text boxes would no
+  longer fit a turned page. The check costs about 2 to 4 seconds per
+  image-only page on a CPU. Angles of less than 0.2 degrees and more than
+  5 degrees are not corrected, and a page with less than five text lines is
+  left as it is.
+- Which way is up is decided by reading lines with RapidOCR's Latin
+  recognizer. For pages in other scripts the decision can fail; an upright
+  page then stays as it is, but a sideways page can end upside down.
+- When straightening is off (or the page has a text layer), a table printed
+  sideways keeps Sarvam's text: RapidOCR cannot read sideways text, and
+  Docling cannot find its columns.
 - Each Sarvam job carries up to 10 pages (Extracta raises Docling's OCR batch
   size to 10 when Sarvam is used).
 - Sarvam is a paid remote API. Page images leave your machine.

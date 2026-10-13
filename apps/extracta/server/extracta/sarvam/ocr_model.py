@@ -334,7 +334,9 @@ class SarvamOcrModel(BaseOcrModel):
 
         Returns None when the text in the region runs sideways (a landscape
         table printed on a portrait page): RapidOCR reads it as garbage, while
-        Sarvam reads it correctly.
+        Sarvam reads it correctly. With `straighten_scanned_pages` (the
+        default), image-only pages are already upright here; this covers pages
+        with a text layer and conversions with that setting off.
         """
         assert self._table_reader is not None and page._backend is not None
         scale = self._table_reader.scale
