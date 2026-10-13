@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "extracta",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--no-sync", "uvicorn", "extracta.app:app", "--app-dir", "apps/extracta/server", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}
