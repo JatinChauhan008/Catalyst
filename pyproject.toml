@@ -394,6 +394,11 @@ constraints = [
   'pandas>=2.1.4,<3.0.0 ; python_version < "3.11"',
   'pandas>=2.1.4,<4.0.0 ; python_version >= "3.11"',
 ]
+extracta = [
+    "fastapi>=0.115",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.30",
+]
 
 [tool.uv.workspace]
 members = ["packages/docling", "packages/docling-client"]

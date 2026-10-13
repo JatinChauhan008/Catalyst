@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <4.0"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
@@ -2045,7 +2045,6 @@ wheels = [
 name = "docling-slim"
 version = "2.137.0"
 source = { editable = "." }
-default-groups = "all"
 dependencies = [
     { name = "certifi" },
     { name = "docling-core" },
@@ -2385,6 +2384,11 @@ examples = [
     { name = "modelscope" },
     { name = "python-dotenv" },
 ]
+extracta = [
+    { name = "fastapi" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
 pr-fast-checks = [
     { name = "boto3-stubs" },
     { name = "docling-core", extra = ["chunking"] },
@@ -2559,6 +2563,11 @@ examples = [
     { name = "langchain-text-splitters", specifier = ">=0.2" },
     { name = "modelscope", specifier = ">=1.29.0" },
     { name = "python-dotenv", specifier = "~=1.0" },
+]
+extracta = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 pr-fast-checks = [
     { name = "boto3-stubs", specifier = "~=1.37" },
