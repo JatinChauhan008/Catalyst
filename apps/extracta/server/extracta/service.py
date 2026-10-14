@@ -39,7 +39,10 @@ from extracta.models import (
     EnvelopeSettings,
     ErrorInfo,
     ExportSettings,
+    JobSummary,
     OutputItem,
+    PageHtmlSettings,
+    PictureExtractionSettings,
     ProcessingInfo,
     SourceInfo,
     TableExtractionSettings,
@@ -53,6 +56,8 @@ from extracta.options_schema import (
     describe_model,
     warm_factories,
 )
+from extracta.pages import write_page_html
+from extracta.pictures import extract_pictures
 from extracta.presets import register_presets
 from extracta.sarvam import SarvamOcrOptions, register_sarvam_ocr
 from extracta.sarvam.ocr_model import SARVAM_API_KEY_ENV
@@ -127,6 +132,10 @@ class ExtractaService:
             "tables": [
                 f.model_dump() for f in describe_model(TableExtractionSettings())
             ],
+            "pictures": [
+                f.model_dump() for f in describe_model(PictureExtractionSettings())
+            ],
+            "pages": [f.model_dump() for f in describe_model(PageHtmlSettings())],
         }
         description["server"] = {
             "docling_version": _docling_version(),
@@ -142,6 +151,7 @@ class ExtractaService:
         allowed: list[InputFormat] | None,
         images_needed: bool,
         straighten_pages: bool,
+        ignore_text_layer: bool = False,
     ) -> tuple[DocumentConverter, threading.Lock]:
         unknown = set(formats) - {fmt.value for fmt in InputFormat}
         if unknown:
@@ -152,6 +162,7 @@ class ExtractaService:
                 "allowed": [fmt.value for fmt in allowed] if allowed else None,
                 "images": images_needed,
                 "straighten": straighten_pages,
+                "ignore_text": ignore_text_layer,
             },
             sort_keys=True,
         )
@@ -176,8 +187,10 @@ class ExtractaService:
         converter = DocumentConverter(
             allowed_formats=allowed or None, format_options=format_options
         )
-        if straighten_pages:
-            use_upright_backends(converter)
+        if straighten_pages or ignore_text_layer:
+            use_upright_backends(
+                converter, straighten=straighten_pages, ignore_text=ignore_text_layer
+            )
         entry = (converter, threading.Lock())
         with self._converters_lock:
             self._converters[key] = entry
@@ -224,6 +237,8 @@ class ExtractaService:
             checks = _apply(ValidationSettings(), request.validation)
             envelope_settings = _apply(EnvelopeSettings(), request.envelope)
             table_settings = _apply(TableExtractionSettings(), request.tables)
+            picture_settings = _apply(PictureExtractionSettings(), request.pictures)
+            page_settings = _apply(PageHtmlSettings(), request.pages)
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
 
@@ -248,13 +263,18 @@ class ExtractaService:
 
         images_needed = _should_generate_export_images(
             export.image_export_mode, export.to_formats
-        ) or (table_settings.enabled and table_settings.include_images)
+        ) or (
+            (table_settings.enabled and table_settings.include_images)
+            or picture_settings.enabled
+            or page_settings.enabled
+        )
         try:
             converter, lock = self._converter(
                 request.formats,
                 settings.allowed_formats,
                 images_needed,
                 settings.straighten_scanned_pages,
+                settings.ignore_text_layer,
             )
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
@@ -367,6 +387,18 @@ class ExtractaService:
                 converter,
                 table_settings,
                 export,
+                text_layer_ignored=settings.ignore_text_layer,
+            )
+
+        if picture_settings.enabled or page_settings.enabled:
+            self._write_pictures_and_pages(
+                result,
+                envelope,
+                job_dir,
+                outputs_dir,
+                converter,
+                picture_settings,
+                page_settings,
             )
 
         if outputs_dir.exists():
@@ -390,6 +422,69 @@ class ExtractaService:
         )
         return envelope
 
+    def _write_pictures_and_pages(
+        self,
+        result: Any,
+        envelope: Envelope,
+        job_dir: Path,
+        outputs_dir: Path,
+        converter: DocumentConverter,
+        picture_settings: PictureExtractionSettings,
+        page_settings: PageHtmlSettings,
+    ) -> None:
+        def url_for(path: Path) -> str:
+            return self._file_url(envelope.job_id, path.relative_to(job_dir))
+
+        source = TableSource(
+            filename=envelope.source.filename,
+            sha256=envelope.source.sha256,
+            detected_format=envelope.source.detected_format,
+            page_count=len(result.document.pages),
+        )
+        picture_files: dict[str, Path] = {}
+        try:
+            if picture_settings.enabled:
+                pictures, picture_files, manifest = extract_pictures(
+                    result.document,
+                    source,
+                    picture_settings,
+                    outputs_dir / "pictures",
+                    url_for,
+                )
+                envelope.pictures = pictures
+                if manifest is not None:
+                    envelope.outputs.append(
+                        OutputItem(
+                            format="pictures_json",
+                            filename=manifest.name,
+                            media_type="application/json",
+                            size_bytes=manifest.stat().st_size,
+                            url=url_for(manifest),
+                        )
+                    )
+            if page_settings.enabled:
+                lang = page_settings.html_lang or _ocr_html_lang(
+                    converter, result.input.format
+                )
+                envelope.pages, index = write_page_html(
+                    result.document, outputs_dir / "pages", picture_files, lang, url_for
+                )
+                if index is not None:
+                    envelope.outputs.append(
+                        OutputItem(
+                            format="pages_html",
+                            filename=index.name,
+                            media_type="text/html",
+                            size_bytes=index.stat().st_size,
+                            url=url_for(index),
+                        )
+                    )
+        except Exception as exc:
+            _log.exception("Picture or page export failed")
+            envelope.errors.append(
+                ErrorInfo(component="pages", message=f"{type(exc).__name__}: {exc}")
+            )
+
     def _extract_tables(
         self,
         result: Any,
@@ -400,6 +495,8 @@ class ExtractaService:
         converter: DocumentConverter,
         settings: TableExtractionSettings,
         export: ExportSettings,
+        *,
+        text_layer_ignored: bool = False,
     ) -> None:
         fmt = result.input.format
         option = converter.format_to_options.get(fmt)
@@ -418,6 +515,7 @@ class ExtractaService:
             ),
             is_pdf=fmt == InputFormat.PDF,
             is_image=fmt == InputFormat.IMAGE,
+            text_layer_ignored=text_layer_ignored,
             pdf_bytes=data if fmt == InputFormat.PDF else None,
             ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
             table_text=ocr.table_text if isinstance(ocr, SarvamOcrOptions) else None,
@@ -490,6 +588,30 @@ class ExtractaService:
     def _file_url(job_id: str, relative: Path) -> str:
         return f"/api/jobs/{job_id}/files/{relative.as_posix()}"
 
+    def list_jobs(self, limit: int = 50) -> list[JobSummary]:
+        """The newest jobs first, read from their saved envelopes."""
+        envelopes = sorted(
+            self.jobs_dir.glob("*/envelope.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        jobs = []
+        for path in envelopes[:limit]:
+            try:
+                envelope = Envelope.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except ValueError:
+                continue  # an envelope from an older version
+            jobs.append(JobSummary.from_envelope(envelope))
+        return jobs
+
+    def job_envelope(self, job_id: str) -> Envelope | None:
+        path = self.job_file(job_id, "envelope.json")
+        if path is None:
+            return None
+        return Envelope.model_validate_json(path.read_text(encoding="utf-8"))
+
     def job_file(self, job_id: str, relative: str) -> Path | None:
         if not _JOB_ID_RE.match(job_id):
             return None
@@ -511,3 +633,14 @@ class ExtractaService:
 
 def _apply(model: BaseModel, overrides: dict[str, Any]) -> Any:
     return apply_overrides(model, overrides) if overrides else model
+
+
+def _ocr_html_lang(converter: DocumentConverter, fmt: InputFormat | None) -> str:
+    """The HTML `lang` of the OCR language ("hi-IN" -> "hi"), else "en"."""
+    option = converter.format_to_options.get(fmt) if fmt else None
+    pipeline_options = option.pipeline_options if option else None
+    if isinstance(pipeline_options, PdfPipelineOptions) and pipeline_options.do_ocr:
+        lang = pipeline_options.ocr_options.lang
+        if lang and isinstance(pipeline_options.ocr_options, SarvamOcrOptions):
+            return lang[0].removeprefix("iso:").split("-")[0]
+    return "en"

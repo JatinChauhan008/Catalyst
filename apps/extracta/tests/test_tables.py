@@ -206,3 +206,28 @@ def test_a_new_table_with_its_own_caption_above_is_not_linked() -> None:
     second.captions.append(caption.get_ref())
     records, _ = extract_tables(doc, _context(), TableExtractionSettings(enabled=True))
     assert records[0].continues_to is None and records[1].continues_from is None
+
+
+def test_ignored_text_layer_makes_tables_come_from_ocr(service) -> None:
+    """Docling's table model reads words from the PDF text layer even in full-page
+    OCR mode; with `ignore_text_layer` they must come from OCR instead (PDFs with
+    legacy-font text layers)."""
+    request = {
+        **TABLES_ON,
+        "settings": {"ignore_text_layer": True},
+        "formats": {
+            "pdf": {
+                "pipeline_options": {
+                    "ocr_options": {
+                        "__variant__": "RapidOcrOptions",
+                        "mode": "full_page",
+                    }
+                }
+            }
+        },
+    }
+    envelope = _convert(service, TABLE_PAGE.name, TABLE_PAGE.read_bytes(), request)
+    assert envelope.status == "success", envelope.errors
+    [table] = envelope.tables
+    assert table.extraction.method == "ocr"
+    assert table.num_cols >= 6

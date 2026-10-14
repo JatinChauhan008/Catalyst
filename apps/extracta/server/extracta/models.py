@@ -43,6 +43,16 @@ class ConvertSettings(BaseModel):
         int | None,
         Field(description="Last page to convert. Empty means the last page.", ge=1),
     ] = None
+    ignore_text_layer: Annotated[
+        bool,
+        Field(
+            description=(
+                "Ignore the PDF text layer and read every page with OCR, like a scan. "
+                "Use it when the text in the result is garbled: legacy Indic fonts "
+                "(Kruti Dev and similar) store Latin letters that only look like Hindi."
+            )
+        ),
+    ] = False
     straighten_scanned_pages: Annotated[
         bool,
         Field(
@@ -203,6 +213,50 @@ class TableExtractionSettings(BaseModel):
     ] = 5
 
 
+class PageHtmlSettings(BaseModel):
+    """One HTML file per page, with links between the pages."""
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Write one HTML file per page plus an index page. Pictures are linked "
+                "as separate image files, not embedded."
+            )
+        ),
+    ] = False
+    html_lang: Annotated[
+        str | None,
+        Field(
+            description=(
+                "The `lang` attribute of the pages (for example `hi` for Hindi). Empty "
+                "takes the OCR language when there is one, else `en`."
+            )
+        ),
+    ] = None
+
+
+class PictureExtractionSettings(BaseModel):
+    """Save every picture as its own file, with metadata about its origin."""
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Save every picture (photo, chart, drawing, logo) as a PNG file, with "
+                "a JSON manifest of its page, position, caption and section."
+            )
+        ),
+    ] = False
+    min_size_px: Annotated[
+        int,
+        Field(
+            description="Skip pictures smaller than this (width or height, in pixels), such as small decorations.",
+            ge=0,
+        ),
+    ] = 32
+
+
 class ConvertRequest(BaseModel):
     """The options of one conversion, as sparse overrides of the defaults."""
 
@@ -211,6 +265,8 @@ class ConvertRequest(BaseModel):
     validation: dict[str, Any] = {}
     envelope: dict[str, Any] = {}
     tables: dict[str, Any] = {}
+    pages: dict[str, Any] = {}
+    pictures: dict[str, Any] = {}
     formats: dict[str, FormatConfig] = {}
 
 
@@ -337,6 +393,33 @@ class TableRecord(TableSummary):
     rows: list[list[str]]
 
 
+class PictureSummary(BaseModel):
+    """One picture and the metadata that says where it comes from."""
+
+    picture_id: str
+    index: int = Field(description="Position of the picture in the document, from 1.")
+    source: TableSource
+    page: int | None = None
+    regions: list[TableRegion] = []
+    caption: str | None = None
+    section: str | None = None
+    width_px: int
+    height_px: int
+    files: dict[str, str] = {}
+
+
+class PictureManifest(BaseModel):
+    schema_version: str = "1.0"
+    source: TableSource
+    pictures: list[PictureSummary]
+
+
+class PageLink(BaseModel):
+    page: int
+    url: str
+    heading: str | None = None
+
+
 class TableManifest(BaseModel):
     schema_version: str = "1.0"
     source: TableSource
@@ -362,6 +445,42 @@ class Envelope(BaseModel):
     validation: ValidationReport | None = None
     outputs: list[OutputItem] = []
     tables: list[TableSummary] = []
+    pictures: list[PictureSummary] = []
+    pages: list[PageLink] = []
     bundle_url: str | None = None
     original_url: str | None = None
     errors: list[ErrorInfo] = []
+
+
+class JobSummary(BaseModel):
+    """One past conversion, for the history list."""
+
+    job_id: str
+    created_at: datetime
+    status: str
+    filename: str
+    size_bytes: int
+    detected_format: str | None = None
+    pages: int = 0
+    tables: int = 0
+    pictures: int = 0
+    ocr_engine: str | None = None
+    duration_seconds: float | None = None
+
+    @classmethod
+    def from_envelope(cls, envelope: Envelope) -> JobSummary:
+        return cls(
+            job_id=envelope.job_id,
+            created_at=envelope.created_at,
+            status=envelope.status,
+            filename=envelope.source.filename,
+            size_bytes=envelope.source.size_bytes,
+            detected_format=envelope.source.detected_format,
+            pages=envelope.stats.pages if envelope.stats else 0,
+            tables=envelope.stats.tables if envelope.stats else 0,
+            pictures=envelope.stats.pictures if envelope.stats else 0,
+            ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
+            duration_seconds=envelope.processing.duration_seconds
+            if envelope.processing
+            else None,
+        )

@@ -61,6 +61,26 @@ _ISO_TO_SARVAM = {"or": "od-IN"}
 # Layout regions whose text is laid out in columns.
 _TABLE_LABELS = frozenset({DocItemLabel.TABLE, DocItemLabel.DOCUMENT_INDEX})
 
+# RapidOCR recognizer for the tables of a document in this Sarvam language.
+# None: RapidOCR has no model for the script, so tables keep Sarvam's text.
+_DEVANAGARI = (
+    "hi-IN",
+    "mr-IN",
+    "ne-IN",
+    "sa-IN",
+    "mai-IN",
+    "kok-IN",
+    "doi-IN",
+    "brx-IN",
+)
+_TABLE_READER_LANG: dict[str | None, list[str] | None] = {
+    None: None,  # no language: Sarvam treats the text as Indic
+    "en-IN": [],  # RapidOCR's default (Latin) recognizer
+    "ta-IN": ["ta"],
+    "te-IN": ["te"],
+    **{code: ["devanagari"] for code in _DEVANAGARI},
+}
+
 
 class SarvamOcrOptions(OcrOptions):
     """Options for the Sarvam Vision OCR engine (remote API)."""
@@ -138,7 +158,9 @@ class SarvamOcrOptions(OcrOptions):
         Field(
             description=(
                 "How text inside tables is read. `local` reads table regions with "
-                "RapidOCR, which returns word boxes, so Docling can find the columns. "
+                "RapidOCR, which returns word boxes, so Docling can find the columns; "
+                "it picks the Devanagari, Tamil or Telugu model from `lang`, and "
+                "falls back to Sarvam's text for scripts RapidOCR cannot read. "
                 "`sarvam` uses Sarvam's text, which is better for Indic scripts, but "
                 "Sarvam gives one box per row, so the columns are often merged."
             )
@@ -201,12 +223,23 @@ class SarvamOcrModel(BaseOcrModel):
                 poll_interval_seconds=self.options.poll_interval_seconds,
                 job_timeout_seconds=self.options.job_timeout_seconds,
             )
-            if self.options.table_text == "local":
+            reader_lang = _TABLE_READER_LANG.get(self._language)
+            if self.options.table_text == "local" and reader_lang is not None:
+                reader_options = (
+                    RapidOcrOptions(lang=reader_lang)
+                    if reader_lang
+                    else RapidOcrOptions()
+                )
                 self._table_reader = RapidOcrModel(
                     enabled=True,
                     artifacts_path=artifacts_path,
-                    options=RapidOcrOptions(),
+                    options=reader_options,
                     accelerator_options=accelerator_options,
+                )
+            elif self.options.table_text == "local":
+                _log.info(
+                    "RapidOCR has no recognizer for %s; tables keep Sarvam's text.",
+                    self._language or "Indic text",
                 )
 
     @classmethod

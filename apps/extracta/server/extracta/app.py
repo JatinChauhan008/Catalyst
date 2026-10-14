@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
-from extracta.models import ConvertRequest, Envelope
+from extracta.models import ConvertRequest, Envelope, JobSummary
 from extracta.service import ExtractaService, ServerSettings
 
 try:  # best effort: read SARVAM_API_KEY and EXTRACTA_* from a local .env file
@@ -104,12 +104,27 @@ def create_app() -> FastAPI:
             service.convert, file.filename or "upload", data, request
         )
 
+    @app.get("/api/jobs", response_model=list[JobSummary])
+    def jobs(limit: int = 50) -> list[JobSummary]:
+        return get_service().list_jobs(limit=min(max(limit, 1), 500))
+
+    @app.get("/api/jobs/{job_id}", response_model=Envelope)
+    def job(job_id: str) -> Envelope:
+        envelope = get_service().job_envelope(job_id)
+        if envelope is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return envelope
+
     @app.get("/api/jobs/{job_id}/files/{path:path}")
     def job_file(job_id: str, path: str) -> FileResponse:
         target = get_service().job_file(job_id, path)
         if target is None:
             raise HTTPException(status_code=404, detail="File not found.")
-        return FileResponse(target, filename=target.name)
+        # Inline: pages and images open in the browser; the UI's download
+        # links still save the file.
+        return FileResponse(
+            target, filename=target.name, content_disposition_type="inline"
+        )
 
     web_dist = settings.web_dist or _DEFAULT_WEB_DIST
     if web_dist.is_dir():

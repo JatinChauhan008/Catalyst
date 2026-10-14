@@ -20,6 +20,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from docling_core.types.doc import (
+    DocItem,
     DocItemLabel,
     DoclingDocument,
     NodeItem,
@@ -71,6 +72,7 @@ class ExtractionContext:
     source: TableSource
     is_pdf: bool
     is_image: bool
+    text_layer_ignored: bool = False
     pdf_bytes: bytes | None = None
     ocr_engine: str | None = None
     table_text: str | None = None
@@ -160,9 +162,7 @@ def extract_tables(
 
 
 # ------------------------------------------------------------------ metadata
-def _regions(
-    item: TableItem, document: DoclingDocument, units: str
-) -> list[TableRegion]:
+def _regions(item: DocItem, document: DoclingDocument, units: str) -> list[TableRegion]:
     regions = []
     for prov in item.prov:
         page = document.pages.get(prov.page_no)
@@ -347,7 +347,7 @@ def _method(
     regions: list[TableRegion],
     text_layer: _TextLayer | None,
 ) -> str:
-    if context.is_image:
+    if context.is_image or context.text_layer_ignored:
         return "ocr"
     if not context.is_pdf:
         return "structured"

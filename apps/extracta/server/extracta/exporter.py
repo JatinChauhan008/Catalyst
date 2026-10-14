@@ -21,7 +21,7 @@ from docling_core.transforms.serializer.html import (
 )
 from docling_core.transforms.serializer.latex import LaTeXDocSerializer
 from docling_core.transforms.visualizer.layout_visualizer import LayoutVisualizer
-from docling_core.types.doc import DoclingDocument
+from docling_core.types.doc import DoclingDocument, ImageRefMode
 
 from docling.datamodel.base_models import OutputFormat
 from docling.datamodel.service.responses import ChunkedDocumentResultItem
@@ -72,6 +72,13 @@ def export_document(
     path = target_dir / f"{stem}{FILE_SUFFIXES[to_format]}"
     image_mode = settings.image_export_mode
 
+    if (
+        to_format in (OutputFormat.JSON, OutputFormat.YAML)
+        and image_mode == ImageRefMode.PLACEHOLDER
+    ):
+        # Docling keeps page and picture images in JSON/YAML even with
+        # placeholders; they are rendered for the image and table files.
+        document = _without_images(document)
     if to_format == OutputFormat.JSON:
         document.save_as_json(filename=path, image_mode=image_mode)
     elif to_format == OutputFormat.YAML:
@@ -118,6 +125,15 @@ def export_document(
     else:
         raise ValueError(f"Unsupported output format {to_format}")
     return path
+
+
+def _without_images(document: DoclingDocument) -> DoclingDocument:
+    copy = document.model_copy(deep=True)
+    for page in copy.pages.values():
+        page.image = None
+    for picture in copy.pictures:
+        picture.image = None
+    return copy
 
 
 def _write_chunks(

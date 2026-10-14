@@ -30,7 +30,7 @@ import math
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Optional
+from typing import ClassVar, Optional
 
 import numpy
 from docling_core.types.doc import BoundingBox, CoordOrigin, Size
@@ -380,10 +380,23 @@ def _otsu_threshold(pixels: numpy.ndarray) -> int:
 
 
 class UprightPageBackend(PdfPageBackend):
-    """A page backend that shows an image-only page upright and straight."""
+    """A page backend that shows an image-only page upright and straight.
 
-    def __init__(self, inner: PdfPageBackend) -> None:
+    With `ignore_text`, the page also hides its PDF text layer and is read like
+    a scan, for PDFs whose text layer is unusable (legacy fonts such as Kruti
+    Dev store Latin letters that only look like Hindi).
+    """
+
+    def __init__(
+        self,
+        inner: PdfPageBackend,
+        *,
+        straighten: bool = True,
+        ignore_text: bool = False,
+    ) -> None:
         self._inner = inner
+        self._straighten = straighten
+        self._ignore_text = ignore_text
         self._lock = threading.Lock()
         self._frame: _Frame | None = None
         self._decided = False
@@ -400,9 +413,15 @@ class UprightPageBackend(PdfPageBackend):
                 self._frame = self._decide()
             return self._frame
 
+    @property
+    def _hides_text(self) -> bool:
+        return self._ignore_text or self.correction_frame is not None
+
     def _decide(self) -> _Frame | None:
         inner = self._inner
-        if not inner.is_valid() or not _is_image_only(inner):
+        if not self._straighten or not inner.is_valid():
+            return None
+        if not self._ignore_text and not _is_image_only(inner):
             return None
         size = inner.get_size()
         scale = min(2.0, _PROBE_PIXELS / max(size.width, size.height, 1.0))
@@ -479,19 +498,21 @@ class UprightPageBackend(PdfPageBackend):
         return render
 
     def get_text_in_rect(self, bbox: BoundingBox) -> str:
-        if self.correction_frame is None:
+        if not self._hides_text:
             return self._inner.get_text_in_rect(bbox)
         return ""  # an image-only page has no text layer
 
     def get_segmented_page(self) -> Optional[SegmentedPdfPage]:
-        frame = self.correction_frame
-        if frame is None:
+        if not self._hides_text:
             return self._inner.get_segmented_page()
+        # Docling's table model takes its words from here, even in full-page
+        # OCR mode: an empty page makes it use the OCR text instead.
+        size = self.get_size()
         page = BoundingBox(
             l=0.0,
             t=0.0,
-            r=frame.out_width,
-            b=frame.out_height,
+            r=size.width,
+            b=size.height,
             coord_origin=CoordOrigin.BOTTOMLEFT,
         )
         return SegmentedPdfPage(
@@ -514,12 +535,12 @@ class UprightPageBackend(PdfPageBackend):
         )
 
     def get_text_cells(self) -> Iterable[TextCell]:
-        if self.correction_frame is None:
+        if not self._hides_text:
             return self._inner.get_text_cells()
         return []
 
     def get_visible_text_cells(self) -> Optional[list[TextCell]]:
-        if self.correction_frame is None:
+        if not self._hides_text:
             return self._inner.get_visible_text_cells()
         return []
 
@@ -546,7 +567,10 @@ class UprightPageBackend(PdfPageBackend):
                 bbox = bbox.to_top_left_origin(frame.out_height)
             bbox = frame.backward_box(bbox)
         return self._inner.has_content_in(
-            bbox=bbox, chars=chars, shapes=shapes, bitmaps=bitmaps
+            bbox=bbox,
+            chars=chars and not self._hides_text,
+            shapes=shapes,
+            bitmaps=bitmaps,
         )
 
     def get_shape_lines(
@@ -598,17 +622,21 @@ def _is_image_only(page: PdfPageBackend) -> bool:
 class _UprightPages(PdfDocumentBackend):
     """Mixin for PDF document backends: every page comes wrapped."""
 
+    straighten: ClassVar[bool] = True
+    ignore_text: ClassVar[bool] = False
+
+    def _wrap(self, page: PdfPageBackend) -> UprightPageBackend:
+        return UprightPageBackend(
+            page, straighten=self.straighten, ignore_text=self.ignore_text
+        )
+
     def load_page(self, page_no: int) -> PdfPageBackend:
-        return UprightPageBackend(super().load_page(page_no))
+        return self._wrap(super().load_page(page_no))
 
     def iter_pages(self) -> Iterator[PdfPageBackend]:
         for page in super().iter_pages():
             # The default iter_pages() goes through load_page(), which wraps already.
-            yield (
-                page
-                if isinstance(page, UprightPageBackend)
-                else UprightPageBackend(page)
-            )
+            yield page if isinstance(page, UprightPageBackend) else self._wrap(page)
 
 
 class UprightDoclingParseBackend(_UprightPages, ThreadedDoclingParseDocumentBackend):
@@ -630,7 +658,27 @@ UPRIGHT_BACKENDS: dict[type[AbstractDocumentBackend], type[PdfDocumentBackend]] 
 }
 
 
-def use_upright_backends(converter: DocumentConverter) -> None:
+_VARIANTS: dict[tuple[type, bool, bool], type[PdfDocumentBackend]] = {}
+
+
+def _variant(
+    backend: type[PdfDocumentBackend], straighten: bool, ignore_text: bool
+) -> type[PdfDocumentBackend]:
+    key = (backend, straighten, ignore_text)
+    if key not in _VARIANTS:
+        _VARIANTS[key] = type(
+            backend.__name__
+            + ("" if straighten else "NoStraighten")
+            + ("IgnoreText" if ignore_text else ""),
+            (backend,),
+            {"straighten": straighten, "ignore_text": ignore_text},
+        )
+    return _VARIANTS[key]
+
+
+def use_upright_backends(
+    converter: DocumentConverter, *, straighten: bool = True, ignore_text: bool = False
+) -> None:
     """Let the paginated formats of a converter read their pages upright.
 
     Set after the converter is built: DocumentConverter replaces any image
@@ -642,4 +690,4 @@ def use_upright_backends(converter: DocumentConverter) -> None:
             continue  # the native pipeline renders no pages and runs no models
         upright = UPRIGHT_BACKENDS.get(option.backend)
         if upright is not None:
-            option.backend = upright
+            option.backend = _variant(upright, straighten, ignore_text)

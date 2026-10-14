@@ -154,6 +154,28 @@ each table:
 | `quality` | `ok`, or `warn` with reasons (one column, mostly empty, no cells) |
 | `continues_from`, `continues_to` | Links between the parts of a table that runs over a page break. A part with its own title or a caption above it starts a new table. Set `join_continued` to join the parts into one table. |
 
+## HTML per page and images as files
+
+- **HTML per page** (`"pages": {"enabled": true}`): `outputs/pages/page-001.html`
+  and so on, with links to the previous and next page, and `index.html` with
+  the first heading of each page. Pictures are linked image files, not
+  embedded.
+- **Extract images** (`"pictures": {"enabled": true}`): every picture as
+  `outputs/pictures/<id>.png` (ID: file hash, page, number on the page), with
+  `pictures.json` listing page, position, caption, section and pixel size.
+  `min_size_px` skips small decorations.
+
+## PDFs with garbled text
+
+Some PDFs, often Hindi documents made with legacy fonts such as Kruti Dev,
+have a text layer of Latin letters that only look like Hindi on screen
+("fgekpy çns'k" for "हिमाचल प्रदेश"). Turn on **Scanned document** (or
+`"settings": {"ignore_text_layer": true}` with OCR mode `full_page`): every page
+is then read with OCR. Without it, tables keep the garbled letters, because
+Docling's table model takes its words from the PDF text layer even in
+full-page OCR mode. Set the OCR language too (`hi-IN` for Hindi); tables are
+then read with RapidOCR's Devanagari model.
+
 ## Options
 
 The main screen has three steps: add documents, choose settings, see results.
