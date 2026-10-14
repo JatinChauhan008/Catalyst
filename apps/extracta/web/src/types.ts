@@ -81,6 +81,8 @@ export interface Catalog {
     validation: FieldSpec[];
     envelope: FieldSpec[];
     tables: FieldSpec[];
+    pictures: FieldSpec[];
+    pages: FieldSpec[];
   };
   server: {
     docling_version: string;
@@ -105,6 +107,8 @@ export interface ConvertRequest {
   validation: Overrides;
   envelope: Overrides;
   tables: Overrides;
+  pages: Overrides;
+  pictures: Overrides;
   formats: Record<string, FormatConfig>;
 }
 
@@ -155,6 +159,24 @@ export interface TableSummary {
   preview: string[][];
 }
 
+export interface PictureSummary {
+  picture_id: string;
+  index: number;
+  page: number | null;
+  regions: TableRegion[];
+  caption: string | null;
+  section: string | null;
+  width_px: number;
+  height_px: number;
+  files: Record<string, string>;
+}
+
+export interface PageLink {
+  page: number;
+  url: string;
+  heading: string | null;
+}
+
 export interface Envelope {
   schema_version: string;
   job_id: string;
@@ -180,7 +202,23 @@ export interface Envelope {
   validation: { passed: boolean; checks: ValidationCheck[] } | null;
   outputs: OutputItem[];
   tables?: TableSummary[];
+  pictures?: PictureSummary[];
+  pages?: PageLink[];
   bundle_url: string | null;
   original_url: string | null;
   errors: { component: string | null; module: string | null; message: string }[];
+}
+
+export interface JobSummary {
+  job_id: string;
+  created_at: string;
+  status: Envelope["status"];
+  filename: string;
+  size_bytes: number;
+  detected_format: string | null;
+  pages: number;
+  tables: number;
+  pictures: number;
+  ocr_engine: string | null;
+  duration_seconds: number | null;
 }

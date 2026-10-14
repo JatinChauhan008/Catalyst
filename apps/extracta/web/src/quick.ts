@@ -20,6 +20,8 @@ export interface Quick {
   scanned: boolean;
   tables: boolean;
   extractTables: boolean;
+  htmlPerPage: boolean;
+  extractImages: boolean;
   /** Set when PDFs use a pipeline that the simple settings do not cover. */
   pipelineNote: string | null;
 }
@@ -94,9 +96,11 @@ export function readQuick(request: ConvertRequest, catalog: Catalog): Quick {
     images: (request.export.image_export_mode as string | undefined) ?? String(field(exportFields, "image_export_mode")?.default),
     engine,
     language: (Array.isArray(ocr.lang) ? (ocr.lang[0] as string) : undefined) ?? "en-IN",
-    scanned: ocr.mode === "full_page",
+    scanned: ocr.mode === "full_page" || request.settings.ignore_text_layer === true,
     tables: options.do_table_structure !== false,
     extractTables: request.tables?.enabled === true,
+    htmlPerPage: request.pages?.enabled === true,
+    extractImages: request.pictures?.enabled === true,
     pipelineNote:
       pipeline === "standard" ? null : `PDFs use the "${catalog.pipelines[pipeline].label}" pipeline (Advanced settings).`,
   };
@@ -123,6 +127,15 @@ export function writeQuick(request: ConvertRequest, catalog: Catalog, change: Pa
   let next = request;
   if (change.outputs) next = { ...next, export: { ...next.export, to_formats: change.outputs } };
   if (change.images) next = { ...next, export: { ...next.export, image_export_mode: change.images } };
+  const toggle = (key: "pages" | "pictures", on: boolean | undefined) => {
+    if (on === undefined) return;
+    const section = { ...(next[key] ?? {}) };
+    if (on) section.enabled = true;
+    else delete section.enabled;
+    next = { ...next, [key]: section };
+  };
+  toggle("pages", change.htmlPerPage);
+  toggle("pictures", change.extractImages);
   if (change.extractTables !== undefined) {
     const tables = { ...(next.tables ?? {}) };
     if (change.extractTables) tables.enabled = true;
@@ -158,6 +171,11 @@ export function writeQuick(request: ConvertRequest, catalog: Catalog, change: Pa
       if (scanned) ocr.mode = "full_page";
       else delete ocr.mode;
     });
+    // Also ignore the PDF text layer: the table model reads its words from it.
+    const settings = { ...next.settings };
+    if (scanned) settings.ignore_text_layer = true;
+    else delete settings.ignore_text_layer;
+    next = { ...next, settings };
   }
   if (change.tables !== undefined) {
     const tables = change.tables;

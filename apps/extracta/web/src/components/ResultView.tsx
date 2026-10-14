@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { OUTPUT_LABELS } from "../quick";
 import type { Envelope, OutputItem } from "../types";
+import { PagesSection, PicturesSection } from "./PagesAndPictures";
 import { TablesSection } from "./TablesSection";
 
 export function formatBytes(size: number): string {
@@ -49,7 +50,9 @@ function OutputPreview({ output }: { output: OutputItem }) {
 export function ResultView({ envelope }: { envelope: Envelope }) {
   const preferred = ["html", "md", "text", "json"];
   // The table package has its own section.
-  const documentOutputs = envelope.outputs.filter((output) => !output.format.startsWith("tables_"));
+  const documentOutputs = envelope.outputs.filter(
+    (output) => !/^(tables|pictures|pages)_/.test(output.format),
+  );
   const firstOutput =
     preferred.map((id) => documentOutputs.find((output) => output.format === id)).find(Boolean) ?? documentOutputs[0];
   const [active, setActive] = useState(firstOutput?.format ?? "");
@@ -87,6 +90,12 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
       )}
 
       {facts.length > 0 && <p className="facts">{facts.join(" · ")}</p>}
+
+      {envelope.pages && envelope.pages.length > 0 && <PagesSection pages={envelope.pages} outputs={envelope.outputs} />}
+
+      {envelope.pictures && envelope.pictures.length > 0 && (
+        <PicturesSection pictures={envelope.pictures} outputs={envelope.outputs} />
+      )}
 
       {envelope.tables && envelope.tables.length > 0 && (
         <TablesSection tables={envelope.tables} outputs={envelope.outputs} />
