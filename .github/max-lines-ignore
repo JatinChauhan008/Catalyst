@@ -6,7 +6,7 @@
 # those tests instead of growing this list.
 
 [silent]
-apps/extracta/web/package-lock.json
+apps/catalyst/web/package-lock.json
 docs/examples/data/**
 tests/data/**
 

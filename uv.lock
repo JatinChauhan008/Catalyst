@@ -2384,7 +2384,7 @@ examples = [
     { name = "modelscope" },
     { name = "python-dotenv" },
 ]
-extracta = [
+catalyst = [
     { name = "fastapi" },
     { name = "python-multipart" },
     { name = "uvicorn" },
@@ -2564,7 +2564,7 @@ examples = [
     { name = "modelscope", specifier = ">=1.29.0" },
     { name = "python-dotenv", specifier = "~=1.0" },
 ]
-extracta = [
+catalyst = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "uvicorn", specifier = ">=0.30" },
