@@ -28,10 +28,14 @@ class FakeSarvam:
     """Records Digitise jobs and answers with one block per page.
 
     The text block covers the top part of the page image and holds `lines`.
+    Each entry of `tables` adds a table block: a normalized box and its HTML.
     """
 
     base_url: str = ""
     lines: tuple[str, ...] = ("SARVAM FAKE LINE ONE", "SARVAM FAKE LINE TWO")
+    tables: list[tuple[tuple[float, float, float, float], str]] = field(
+        default_factory=list
+    )
     jobs: dict[str, dict] = field(default_factory=dict)
     submissions: list[dict] = field(default_factory=list)
 
@@ -109,6 +113,10 @@ class FakeSarvam:
                                 height,
                             ),
                             _fake_block("image", "", image_box, width, height),
+                            *(
+                                _fake_block("table", html, box, width, height)
+                                for box, html in self.tables
+                            ),
                         ],
                     }
                 )

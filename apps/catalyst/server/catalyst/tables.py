@@ -39,6 +39,7 @@ from catalyst.models import (
     TableRegion,
     TableSource,
 )
+from catalyst.scripts import Script, is_garbled
 
 # Text right above a table that names it ("STATEMENT SHOWING DISTRICT-WISE ...").
 _TITLE_MAX_CHARS = 200
@@ -76,6 +77,10 @@ class ExtractionContext:
     pdf_bytes: bytes | None = None
     ocr_engine: str | None = None
     table_text: str | None = None
+    # References of the tables that took their structure from Sarvam.
+    sarvam_tables: set[str] = field(default_factory=set)
+    # A text layer with almost no letters in this script was hidden for OCR.
+    garbled_script: Script | None = None
 
 
 @dataclass
@@ -96,7 +101,9 @@ def extract_tables(
         item for item, _ in document.iterate_items(with_groups=False)
     ]
     text_layer = (
-        _TextLayer(context.pdf_bytes) if context.is_pdf and context.pdf_bytes else None
+        _TextLayer(context.pdf_bytes, context.garbled_script)
+        if context.is_pdf and context.pdf_bytes
+        else None
     )
 
     entries: list[_Entry] = []
@@ -144,6 +151,9 @@ def extract_tables(
                 method=_method(context, regions, text_layer),
                 ocr_engine=context.ocr_engine,
                 table_text=context.table_text,
+                structure="sarvam"
+                if item.self_ref in context.sarvam_tables
+                else "docling",
             ),
             quality=_quality(len(rows), item.data.num_cols, empty_share),
             preview=rows[: settings.preview_rows],
@@ -327,10 +337,11 @@ def _quality(rows: int, cols: int, empty_share: float) -> TableQuality:
 class _TextLayer:
     """Counts the PDF text inside a region, to tell text-layer tables from scans."""
 
-    def __init__(self, pdf_bytes: bytes) -> None:
+    def __init__(self, pdf_bytes: bytes, garbled_script: Script | None) -> None:
         import pypdfium2
 
         self._pdf = pypdfium2.PdfDocument(io.BytesIO(pdf_bytes))
+        self._garbled_script = garbled_script
 
     def chars(self, region: TableRegion) -> int:
         page = self._pdf[region.page - 1]
@@ -339,6 +350,10 @@ class _TextLayer:
         text = page.get_textpage().get_text_bounded(
             left, height - bottom, right, height - top
         )
+        if self._garbled_script is not None and is_garbled(
+            page.get_textpage().get_text_range(), self._garbled_script
+        ):
+            return 0  # the converter hid this text layer and read the page with OCR
         return len(text.strip())
 
 

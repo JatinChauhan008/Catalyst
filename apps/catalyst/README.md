@@ -100,10 +100,16 @@ Limits that you must know:
 
 - Sarvam returns one box per block (paragraph, table, heading), not per word
   or line. Catalyst splits a block into equal-height lines, which is correct
-  for running text. Table rows would then lose their columns, so by default
-  (`table_text = local`) the text inside table regions is read with RapidOCR,
-  which gives word boxes. Set `table_text = sarvam` for tables in Indic
-  scripts; their columns can then merge.
+  for running text. For a table, Sarvam also returns an HTML table with its
+  merged cells. By default (`table_structure = sarvam`) that table replaces
+  the table that Docling's table model builds, so the rows, columns and text
+  come from Sarvam. A table that Sarvam did not return as HTML is built by
+  Docling's table model: by default (`table_text = local`) its text is read
+  with RapidOCR, which gives word boxes. Set `table_text = sarvam` to use
+  Sarvam's text instead; the columns can then merge.
+- A Sarvam table replaces a Docling table only when the two boxes overlap on
+  the same page. When Docling's layout model does not find a table, Sarvam's
+  table text stays as plain text.
 - Straightening applies only to image-only pages. A scan with a text layer
   (a "searchable" PDF) is used as it is, because its text boxes would no
   longer fit a turned page. The check costs about 2 to 4 seconds per
@@ -167,7 +173,7 @@ each table:
 | `section` | The nearest heading before the table |
 | `units` | A units note found in the title, caption, header or just above ("(Rs in lakh)", "(IN MM)") |
 | `num_rows`, `num_cols`, `header_rows`, `empty_cells_share` | Shape of the table |
-| `extraction` | `text_layer`, `ocr`, `mixed` or `structured`, plus the OCR engine and the Sarvam `table_text` setting |
+| `extraction` | `text_layer`, `ocr`, `mixed` or `structured`, plus the OCR engine, the Sarvam `table_text` setting, and `structure`: `sarvam` when the rows and columns come from Sarvam's HTML table, else `docling` |
 | `quality` | `ok`, or `warn` with reasons (one column, mostly empty, no cells) |
 | `continues_from`, `continues_to` | Links between the parts of a table that runs over a page break. A part with its own title or a caption above it starts a new table. Set `join_continued` to join the parts into one table. |
 
@@ -186,12 +192,19 @@ each table:
 
 Some PDFs, often Hindi documents made with legacy fonts such as Kruti Dev,
 have a text layer of Latin letters that only look like Hindi on screen
-("fgekpy çns'k" for "हिमाचल प्रदेश"). Turn on **Scanned document** (or
+("fgekpy çns'k" for "हिमाचल प्रदेश"). With Sarvam OCR and an Indic language
+(`hi-IN` for Hindi), Catalyst finds such pages itself
+(`"settings": {"ignore_garbled_text_layer": true}`, the default): a page whose
+text layer has almost no letters in the script of the language hides that
+layer and is read with OCR. Other pages keep their text layer. A page in
+another language (for example English in a Hindi document) is also read with
+OCR. Each such page is sent to Sarvam and billed.
+
+For other OCR engines, turn on **Scanned document** (or
 `"settings": {"ignore_text_layer": true}` with OCR mode `full_page`): every page
 is then read with OCR. Without it, tables keep the garbled letters, because
 Docling's table model takes its words from the PDF text layer even in
-full-page OCR mode. Set the OCR language too (`hi-IN` for Hindi); tables are
-then read with RapidOCR's Devanagari model.
+full-page OCR mode.
 
 ## Options
 

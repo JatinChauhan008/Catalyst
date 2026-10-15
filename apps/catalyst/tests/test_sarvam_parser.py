@@ -65,6 +65,8 @@ def test_table_html_becomes_one_line_per_row_and_images_are_skipped() -> None:
     }
     [table] = parse_page_blocks(payload, image_size=IMAGE_SIZE)
     assert table.lines == ["Name Qty", "A&B 2"]
+    # The HTML is kept for the table structure.
+    assert table.html is not None and "<td>A&amp;B</td>" in table.html
 
 
 def test_archive_pages_map_to_upload_order_and_missing_pages_are_flagged() -> None:

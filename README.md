@@ -21,7 +21,8 @@ source that it runs on.
 - Writes HTML per page and saves pictures as separate image files.
 - Removes repeated page headers and footers, and joins label/value pairs.
 - Reads PDFs with garbled legacy-font text (for example Kruti Dev Hindi)
-  through full-page OCR.
+  with OCR. With Sarvam it finds such pages itself and keeps Sarvam's tables,
+  with their merged cells.
 - Shows every Docling option in the UI. New Docling options appear
   automatically.
 - Keeps a history of recent jobs, with a ZIP download of all outputs.

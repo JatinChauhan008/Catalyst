@@ -150,7 +150,12 @@ export interface TableSummary {
   num_cols: number;
   header_rows: number;
   empty_cells_share: number;
-  extraction: { method: string; ocr_engine: string | null; table_text: string | null };
+  extraction: {
+    method: string;
+    ocr_engine: string | null;
+    table_text: string | null;
+    structure: "docling" | "sarvam";
+  };
   quality: { status: "ok" | "warn"; reasons: string[] };
   continues_from: string | null;
   continues_to: string | null;

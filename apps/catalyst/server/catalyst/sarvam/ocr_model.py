@@ -9,9 +9,12 @@ Sarvam returns block-level boxes (paragraphs, headings, tables), not word or
 line boxes. A block with several text lines is split into equal-height line
 cells. That is good enough for running text, but not for tables: a table row
 becomes one line as wide as the table, and Docling's table-structure model
-cannot place its words in columns. Layout analysis runs before OCR, so the
-table regions are known here. By default (`table_text="local"`) the text inside
-them is read with RapidOCR, which returns word boxes; Sarvam reads the rest.
+cannot place its words in columns. Sarvam returns a table block as an HTML
+table, though. By default (`table_structure="sarvam"`) those tables are kept
+and replace the structure of Docling's table model after the conversion (see
+`catalyst.sarvam.tables`). For the other tables (`table_text="local"`), the
+layout regions are known here, because layout analysis runs before OCR: the
+text inside them is read with RapidOCR, which returns word boxes.
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel
 from docling_core.types.doc.page import BoundingRectangle, TextCell
 from pydantic import ConfigDict, Field, SecretStr
 
+from catalyst import scripts
 from catalyst.sarvam.client import (
     MAX_PAGES_PER_JOB,
     SarvamBlock,
     SarvamDocAiClient,
 )
-from catalyst.sarvam.usage import record_usage
+from catalyst.sarvam.tables import SarvamTable
+from catalyst.sarvam.usage import record_tables, record_usage
 from docling.datamodel.accelerator_options import AcceleratorOptions
 from docling.datamodel.base_models import Page
 from docling.datamodel.document import ConversionResult
@@ -80,6 +85,22 @@ _TABLE_READER_LANG: dict[str | None, list[str] | None] = {
     "ta-IN": ["ta"],
     "te-IN": ["te"],
     **{code: ["devanagari"] for code in _DEVANAGARI},
+}
+
+# The Unicode script of a Sarvam language, where it is clear. A PDF text layer
+# without letters in that script is taken as a legacy-font layer.
+_SARVAM_SCRIPTS: dict[str, scripts.Script] = {
+    "bn-IN": scripts.BENGALI,
+    "as-IN": scripts.BENGALI,
+    "pa-IN": scripts.GURMUKHI,
+    "gu-IN": scripts.GUJARATI,
+    "od-IN": scripts.ORIYA,
+    "ta-IN": scripts.TAMIL,
+    "te-IN": scripts.TELUGU,
+    "kn-IN": scripts.KANNADA,
+    "ml-IN": scripts.MALAYALAM,
+    "ur-IN": scripts.ARABIC,
+    **dict.fromkeys(_DEVANAGARI, scripts.DEVANAGARI),
 }
 
 
@@ -167,6 +188,17 @@ class SarvamOcrOptions(OcrOptions):
             )
         ),
     ] = "local"
+    table_structure: Annotated[
+        Literal["sarvam", "docling"],
+        Field(
+            description=(
+                "Where the rows, columns and merged cells of an OCR'd table come from. "
+                "`sarvam` uses the HTML table that Sarvam returns for a table it read, "
+                "and Docling's table model for the other tables. `docling` always uses "
+                "Docling's table model, on the text that `table_text` selects."
+            )
+        ),
+    ] = "sarvam"
     poll_interval_seconds: Annotated[
         float, Field(description="Delay between job status requests.", gt=0.0)
     ] = 2.0
@@ -183,6 +215,17 @@ class SarvamOcrOptions(OcrOptions):
         if self.api_key is not None and self.api_key.get_secret_value():
             return self.api_key.get_secret_value()
         return os.environ.get(SARVAM_API_KEY_ENV) or None
+
+
+def sarvam_script(options: SarvamOcrOptions) -> scripts.Script | None:
+    """The Unicode script of the document language, when Sarvam's language has one."""
+    if not options.lang:
+        return None
+    code = options.lang[0]
+    if code.startswith("iso:"):
+        primary = code.removeprefix("iso:").split("-")[0].lower()
+        code = _ISO_TO_SARVAM.get(primary, f"{primary}-IN")
+    return _SARVAM_SCRIPTS.get(code)
 
 
 class SarvamOcrModel(BaseOcrModel):
@@ -317,32 +360,79 @@ class SarvamOcrModel(BaseOcrModel):
                     "Sarvam returned no result for page %s; the page keeps its PDF text only.",
                     page.page_no + 1,
                 )
-            cells = self._cells_for_page(page, rects, result.blocks)
+            tables = self._sarvam_tables(page, rects, result.blocks)
+            record_tables(conv_res, list(tables.values()))
+            cells = self._cells_for_page(page, rects, result.blocks, tables)
             self.post_process_cells(cells, page, conv_res)
             if settings.debug.visualize_ocr:
                 self.draw_ocr_rects_and_cells(conv_res, page, rects)
 
-    def _cells_for_page(
+    def _sarvam_tables(
         self, page: Page, rects: list[BoundingBox], blocks: list[SarvamBlock]
+    ) -> dict[int, SarvamTable]:
+        """The HTML tables of Sarvam inside the regions that Docling selected for
+        OCR, by the index of their block."""
+        if self.options.table_structure != "sarvam":
+            return {}
+        assert page.size is not None
+        tables = {}
+        for index, block in enumerate(blocks):
+            if block.html is None:
+                continue
+            box = _page_box(block, page.size.width, page.size.height)
+            if any(
+                box.intersection_over_self(r) >= self.options.min_region_overlap
+                for r in rects
+            ):
+                tables[index] = SarvamTable(
+                    page_no=page.page_no, bbox=box, html=block.html
+                )
+        return tables
+
+    def _cells_for_page(
+        self,
+        page: Page,
+        rects: list[BoundingBox],
+        blocks: list[SarvamBlock],
+        sarvam_tables: dict[int, SarvamTable],
     ) -> list[TextCell]:
         assert page.size is not None
         width, height = page.size.width, page.size.height
         overlap = self.options.min_region_overlap
-        # Read the tables first: a sideways table keeps Sarvam's text instead.
+        layout_tables = self._layout_tables(page, rects)
+        # A Sarvam table replaces the layout table it covers after the
+        # conversion. Its row lines are as wide as the Sarvam box and can stick
+        # out of the layout box, where they would become stray paragraphs: they
+        # are clipped to the layout box.
+        clip_to: dict[int, BoundingBox] = {}
+        for index, found in sarvam_tables.items():
+            for region in layout_tables:
+                if region.intersection_over_self(found.bbox) >= 0.5:
+                    clip_to[index] = region
+                    break
+        # Read the other tables first: a sideways table keeps Sarvam's text instead.
         tables, local = [], []
-        for table in self._table_regions(page, rects):
-            read = self._read_locally(page, table)
-            if read is not None:
-                tables.append(table)
-                local.append(read)
+        if self._table_reader is not None:
+            for table in layout_tables:
+                if table in clip_to.values():
+                    continue
+                read = self._read_locally(page, table)
+                if read is not None:
+                    tables.append(table)
+                    local.append(read)
         cells: list[TextCell] = []
-        for block in blocks:
+        for index, block in enumerate(blocks):
+            region = clip_to.get(index)
             for line_text, line_box in _split_block_lines(block, width, height):
-                if not any(
+                if region is not None:
+                    if not line_box.overlaps(region):
+                        continue
+                    line_box = _clip(line_box, region)
+                elif not any(
                     line_box.intersection_over_self(r) >= overlap for r in rects
                 ):
                     continue
-                if any(line_box.intersection_over_self(t) >= overlap for t in tables):
+                elif any(line_box.intersection_over_self(t) >= overlap for t in tables):
                     continue  # read with word boxes below
                 cells.append(_cell(len(cells), line_text, line_box, block.confidence))
         for read in local:
@@ -350,9 +440,9 @@ class SarvamOcrModel(BaseOcrModel):
                 cells.append(_cell(len(cells), text, box, confidence))
         return cells
 
-    def _table_regions(self, page: Page, rects: list[BoundingBox]) -> list[BoundingBox]:
-        """Table regions of the page layout that need OCR, when they are read locally."""
-        if self._table_reader is None or page.predictions.layout is None:
+    def _layout_tables(self, page: Page, rects: list[BoundingBox]) -> list[BoundingBox]:
+        """Table regions of the page layout that need OCR."""
+        if page.predictions.layout is None:
             return []
         return [
             cluster.bbox
@@ -436,13 +526,29 @@ def _cell(index: int, text: str, box: BoundingBox, confidence: float) -> TextCel
     )
 
 
+def _page_box(block: SarvamBlock, page_width: float, page_height: float) -> BoundingBox:
+    left, top, right, bottom = block.bbox
+    return BoundingBox(
+        l=left * page_width, t=top * page_height,
+        r=right * page_width, b=bottom * page_height,
+        coord_origin=CoordOrigin.TOPLEFT,
+    )  # fmt: skip
+
+
+def _clip(box: BoundingBox, region: BoundingBox) -> BoundingBox:
+    return BoundingBox(
+        l=max(box.l, region.l), t=max(box.t, region.t),
+        r=min(box.r, region.r), b=min(box.b, region.b),
+        coord_origin=CoordOrigin.TOPLEFT,
+    )  # fmt: skip
+
+
 def _split_block_lines(
     block: SarvamBlock, page_width: float, page_height: float
 ) -> list[tuple[str, BoundingBox]]:
     """Split a block into equal-height line boxes in page coordinates."""
-    left, top, right, bottom = block.bbox
-    x0, x1 = left * page_width, right * page_width
-    y0, y1 = top * page_height, bottom * page_height
+    box = _page_box(block, page_width, page_height)
+    x0, x1, y0, y1 = box.l, box.r, box.t, box.b
     step = (y1 - y0) / len(block.lines)
     return [
         (

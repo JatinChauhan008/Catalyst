@@ -17,6 +17,11 @@ each such page:
    page as they are and turned over. When most lines read better turned over,
    the page turns by another 180 degrees.
 
+The same wrapper hides the text layer of a page that is unusable: always
+with `ignore_text`, and with `garbled_script` when the text layer has almost
+no letters in that script (legacy Indic fonts, see `catalyst.scripts`). Such a
+page is read with OCR, like a scan.
+
 The page backend is wrapped, so the page *is* the corrected page for all of
 Docling: the page size, the rendered images, the bitmap regions and the
 provenance of every item use the corrected frame. The stored page size and
@@ -43,6 +48,7 @@ from docling_core.types.doc.page import (
 )
 from PIL import Image
 
+from catalyst.scripts import Script, is_garbled
 from docling.backend.abstract_backend import AbstractDocumentBackend
 from docling.backend.docling_parse_backend import ThreadedDoclingParseDocumentBackend
 from docling.backend.image_backend import ImageDocumentBackend
@@ -384,7 +390,8 @@ class UprightPageBackend(PdfPageBackend):
 
     With `ignore_text`, the page also hides its PDF text layer and is read like
     a scan, for PDFs whose text layer is unusable (legacy fonts such as Kruti
-    Dev store Latin letters that only look like Hindi).
+    Dev store Latin letters that only look like Hindi). With `garbled_script`,
+    it does so only when its text layer has almost no letters in that script.
     """
 
     def __init__(
@@ -393,10 +400,13 @@ class UprightPageBackend(PdfPageBackend):
         *,
         straighten: bool = True,
         ignore_text: bool = False,
+        garbled_script: Script | None = None,
     ) -> None:
         self._inner = inner
         self._straighten = straighten
         self._ignore_text = ignore_text
+        self._garbled_script = garbled_script
+        self._garbled: bool | None = None
         self._lock = threading.Lock()
         self._frame: _Frame | None = None
         self._decided = False
@@ -415,7 +425,27 @@ class UprightPageBackend(PdfPageBackend):
 
     @property
     def _hides_text(self) -> bool:
-        return self._ignore_text or self.correction_frame is not None
+        return (
+            self._ignore_text
+            or self._text_is_garbled
+            or self.correction_frame is not None
+        )
+
+    @property
+    def _text_is_garbled(self) -> bool:
+        if self._garbled_script is None:
+            return False
+        with self._lock:
+            if self._garbled is None:
+                text = " ".join(cell.text for cell in self._inner.get_text_cells())
+                self._garbled = is_garbled(text, self._garbled_script)
+                if self._garbled:
+                    _log.info(
+                        "Page %s: the text layer is not in the OCR language's script; "
+                        "the page is read with OCR.",
+                        self._inner.page_no,
+                    )
+            return self._garbled
 
     def _decide(self) -> _Frame | None:
         inner = self._inner
@@ -624,10 +654,14 @@ class _UprightPages(PdfDocumentBackend):
 
     straighten: ClassVar[bool] = True
     ignore_text: ClassVar[bool] = False
+    garbled_script: ClassVar[Script | None] = None
 
     def _wrap(self, page: PdfPageBackend) -> UprightPageBackend:
         return UprightPageBackend(
-            page, straighten=self.straighten, ignore_text=self.ignore_text
+            page,
+            straighten=self.straighten,
+            ignore_text=self.ignore_text,
+            garbled_script=self.garbled_script,
         )
 
     def load_page(self, page_no: int) -> PdfPageBackend:
@@ -658,28 +692,43 @@ UPRIGHT_BACKENDS: dict[type[AbstractDocumentBackend], type[PdfDocumentBackend]] 
 }
 
 
-_VARIANTS: dict[tuple[type, bool, bool], type[PdfDocumentBackend]] = {}
+_VARIANTS: dict[tuple[type, bool, bool, Script | None], type[PdfDocumentBackend]] = {}
 
 
 def _variant(
-    backend: type[PdfDocumentBackend], straighten: bool, ignore_text: bool
+    backend: type[PdfDocumentBackend],
+    straighten: bool,
+    ignore_text: bool,
+    garbled_script: Script | None,
 ) -> type[PdfDocumentBackend]:
-    key = (backend, straighten, ignore_text)
+    key = (backend, straighten, ignore_text, garbled_script)
     if key not in _VARIANTS:
         _VARIANTS[key] = type(
             backend.__name__
             + ("" if straighten else "NoStraighten")
-            + ("IgnoreText" if ignore_text else ""),
+            + ("IgnoreText" if ignore_text else "")
+            + (f"Script{garbled_script[0]:04X}" if garbled_script else ""),
             (backend,),
-            {"straighten": straighten, "ignore_text": ignore_text},
+            {
+                "straighten": straighten,
+                "ignore_text": ignore_text,
+                "garbled_script": garbled_script,
+            },
         )
     return _VARIANTS[key]
 
 
 def use_upright_backends(
-    converter: DocumentConverter, *, straighten: bool = True, ignore_text: bool = False
+    converter: DocumentConverter,
+    *,
+    straighten: bool = True,
+    ignore_text: bool = False,
+    garbled_script: Script | None = None,
 ) -> None:
     """Let the paginated formats of a converter read their pages upright.
+
+    With `garbled_script`, a page whose text layer has almost no letters in that
+    script hides it and is read with OCR.
 
     Set after the converter is built: DocumentConverter replaces any image
     backend other than ImageDocumentBackend itself (even a subclass) when it
@@ -690,4 +739,4 @@ def use_upright_backends(
             continue  # the native pipeline renders no pages and runs no models
         upright = UPRIGHT_BACKENDS.get(option.backend)
         if upright is not None:
-            option.backend = _variant(upright, straighten, ignore_text)
+            option.backend = _variant(upright, straighten, ignore_text, garbled_script)

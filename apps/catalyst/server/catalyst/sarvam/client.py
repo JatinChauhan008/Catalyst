@@ -54,6 +54,8 @@ _ROW_END_RE = re.compile(
 )
 _CELL_END_RE = re.compile(r"</t[dh]\s*>", re.IGNORECASE)
 _MD_TABLE_RULE_RE = re.compile(r"^\s*\|?\s*:?-{3,}")
+_TABLE_HTML_RE = re.compile(r"<table[\s>]", re.IGNORECASE)
+_TEXT_KEYS = ("text", "content", "markdown", "md", "html", "value")
 
 
 class SarvamApiError(RuntimeError):
@@ -70,12 +72,16 @@ class SarvamBlock:
             image, with the origin at the top-left corner.
         tag: The block type that Sarvam reports (for example ``paragraph``).
         confidence: The confidence that Sarvam reports, or 1.0.
+        html: For a table block, the HTML ``<table>`` that Sarvam returns,
+            with its merged cells (``rowspan``, ``colspan``). ``lines`` holds
+            the same text with one line per row.
     """
 
     lines: list[str]
     bbox: tuple[float, float, float, float]
     tag: str | None = None
     confidence: float = 1.0
+    html: str | None = None
 
 
 @dataclass
@@ -325,7 +331,8 @@ def parse_page_blocks(
         tag = _first_str(
             raw, "layout_tag", "tag", "type", "label", "category", "block_type"
         )
-        lines = _block_lines(raw)
+        text = _first_str(raw, *_TEXT_KEYS)
+        lines = _block_lines(text)
         if not lines or (tag and tag.lower() in _NON_TEXT_TAGS):
             continue
         box = _parse_box(raw)
@@ -343,6 +350,7 @@ def parse_page_blocks(
                 confidence=float(confidence)
                 if isinstance(confidence, int | float)
                 else 1.0,
+                html=text if text and _TABLE_HTML_RE.search(text) else None,
             )
         )
     return blocks
@@ -434,8 +442,7 @@ def _first_str(raw: Mapping[str, Any], *keys: str) -> str | None:
     return None
 
 
-def _block_lines(raw: Mapping[str, Any]) -> list[str]:
-    text = _first_str(raw, "text", "content", "markdown", "md", "html", "value")
+def _block_lines(text: str | None) -> list[str]:
     if text is None:
         return []
     if "<" in text and ">" in text:

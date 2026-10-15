@@ -53,6 +53,18 @@ class ConvertSettings(BaseModel):
             )
         ),
     ] = False
+    ignore_garbled_text_layer: Annotated[
+        bool,
+        Field(
+            description=(
+                "With Sarvam OCR in an Indic language, read a page with OCR when its PDF "
+                "text layer has almost no letters in the script of that language (a "
+                "legacy font such as Kruti Dev). Other pages keep their text layer. A "
+                "page in another language, for example English in a Hindi document, is "
+                "read with OCR as well."
+            )
+        ),
+    ] = True
     straighten_scanned_pages: Annotated[
         bool,
         Field(
@@ -298,6 +310,10 @@ class ProcessingInfo(BaseModel):
     ocr_engine: str | None = None
     headers_removed: int = 0
     key_values_joined: int = 0
+    sarvam_tables: int = Field(
+        default=0,
+        description="Tables that take their rows, columns and merged cells from Sarvam.",
+    )
     sarvam: SarvamCost | None = None
     docling_version: str
     duration_seconds: float
@@ -371,6 +387,13 @@ class TableExtraction(BaseModel):
     )
     ocr_engine: str | None = None
     table_text: str | None = None
+    structure: Literal["docling", "sarvam"] = Field(
+        default="docling",
+        description=(
+            "Where the rows, columns and merged cells come from: Docling (the table "
+            "model, or the structure of the source file) or the HTML table of Sarvam OCR."
+        ),
+    )
 
 
 class TableQuality(BaseModel):

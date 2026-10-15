@@ -56,8 +56,10 @@ from catalyst.pages import write_page_html
 from catalyst.pictures import extract_pictures
 from catalyst.presets import register_presets
 from catalyst.sarvam import SarvamOcrOptions, register_sarvam_ocr
-from catalyst.sarvam.ocr_model import SARVAM_API_KEY_ENV
+from catalyst.sarvam.ocr_model import SARVAM_API_KEY_ENV, sarvam_script
+from catalyst.sarvam.tables import apply_sarvam_tables
 from catalyst.sarvam.usage import take_usage
+from catalyst.scripts import Script
 from catalyst.tables import ExtractionContext, extract_tables, write_table_package
 from catalyst.upright import use_upright_backends
 from catalyst.validation import document_stats, validate
@@ -157,6 +159,7 @@ class CatalystService:
         images_needed: bool,
         straighten_pages: bool,
         ignore_text_layer: bool = False,
+        ignore_garbled_text: bool = False,
     ) -> tuple[DocumentConverter, threading.Lock]:
         unknown = set(formats) - {fmt.value for fmt in InputFormat}
         if unknown:
@@ -168,6 +171,7 @@ class CatalystService:
                 "images": images_needed,
                 "straighten": straighten_pages,
                 "ignore_text": ignore_text_layer,
+                "ignore_garbled": ignore_garbled_text,
             },
             sort_keys=True,
         )
@@ -192,9 +196,17 @@ class CatalystService:
         converter = DocumentConverter(
             allowed_formats=allowed or None, format_options=format_options
         )
-        if straighten_pages or ignore_text_layer:
+        garbled_script = (
+            _ocr_script(converter)
+            if ignore_garbled_text and not ignore_text_layer
+            else None
+        )
+        if straighten_pages or ignore_text_layer or garbled_script:
             use_upright_backends(
-                converter, straighten=straighten_pages, ignore_text=ignore_text_layer
+                converter,
+                straighten=straighten_pages,
+                ignore_text=ignore_text_layer,
+                garbled_script=garbled_script,
             )
         entry = (converter, threading.Lock())
         with self._converters_lock:
@@ -280,6 +292,7 @@ class CatalystService:
                 images_needed,
                 settings.straighten_scanned_pages,
                 settings.ignore_text_layer,
+                settings.ignore_garbled_text_layer,
             )
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
@@ -351,6 +364,11 @@ class CatalystService:
             envelope.status = "failure"
             return envelope
 
+        sarvam_tables: set[str] = set()
+        if sarvam_usage is not None and sarvam_usage.tables:
+            sarvam_tables = apply_sarvam_tables(result.document, sarvam_usage.tables)
+            envelope.processing.sarvam_tables = len(sarvam_tables)
+
         if settings.remove_repeated_headers:
             cleanup = move_repeated_furniture(result.document)
             envelope.processing.headers_removed = cleanup.moved + cleanup.trimmed
@@ -403,6 +421,12 @@ class CatalystService:
                 table_settings,
                 export,
                 text_layer_ignored=settings.ignore_text_layer,
+                sarvam_tables=sarvam_tables,
+                garbled_script=(
+                    _ocr_script(converter)
+                    if settings.ignore_garbled_text_layer
+                    else None
+                ),
             )
 
         if picture_settings.enabled or page_settings.enabled:
@@ -512,6 +536,8 @@ class CatalystService:
         export: ExportSettings,
         *,
         text_layer_ignored: bool = False,
+        sarvam_tables: set[str] | None = None,
+        garbled_script: Script | None = None,
     ) -> None:
         fmt = result.input.format
         option = converter.format_to_options.get(fmt)
@@ -534,6 +560,8 @@ class CatalystService:
             pdf_bytes=data if fmt == InputFormat.PDF else None,
             ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
             table_text=ocr.table_text if isinstance(ocr, SarvamOcrOptions) else None,
+            sarvam_tables=sarvam_tables or set(),
+            garbled_script=garbled_script,
         )
 
         def url_for(path: Path) -> str:
@@ -648,6 +676,19 @@ class CatalystService:
 
 def _apply(model: BaseModel, overrides: dict[str, Any]) -> Any:
     return apply_overrides(model, overrides) if overrides else model
+
+
+def _ocr_script(converter: DocumentConverter) -> Script | None:
+    """The script of the Sarvam OCR language for PDFs, when it has a clear one."""
+    option = converter.format_to_options.get(InputFormat.PDF)
+    pipeline_options = option.pipeline_options if option else None
+    if (
+        isinstance(pipeline_options, PdfPipelineOptions)
+        and pipeline_options.do_ocr
+        and isinstance(pipeline_options.ocr_options, SarvamOcrOptions)
+    ):
+        return sarvam_script(pipeline_options.ocr_options)
+    return None
 
 
 def _ocr_html_lang(converter: DocumentConverter, fmt: InputFormat | None) -> str:
