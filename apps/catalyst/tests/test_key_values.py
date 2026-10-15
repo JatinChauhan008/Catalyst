@@ -7,6 +7,7 @@ separate boxes: the labels in a list, the values after it.
 
 from __future__ import annotations
 
+from catalyst.key_values import join_key_values
 from docling_core.types.doc import (
     BoundingBox,
     CoordOrigin,
@@ -15,7 +16,6 @@ from docling_core.types.doc import (
     ProvenanceItem,
     Size,
 )
-from catalyst.key_values import join_key_values
 
 H = 850.0
 

@@ -9,8 +9,8 @@ from typing import Annotated, Any, Literal
 from docling_core.types.doc import ImageRefMode
 from pydantic import BaseModel, Field
 
-from docling.datamodel.base_models import InputFormat, OutputFormat
 from catalyst.catalog import FormatConfig
+from docling.datamodel.base_models import InputFormat, OutputFormat
 
 ENVELOPE_SCHEMA_VERSION = "1.0"
 
@@ -278,12 +278,27 @@ class SourceInfo(BaseModel):
     detected_format: str | None = None
 
 
+class SarvamCost(BaseModel):
+    """What the Sarvam OCR of one conversion costs.
+
+    Sarvam bills Document Digitization per page, not per token. The price is
+    the server's price when the job ran, so later price changes do not alter it.
+    """
+
+    jobs: int
+    pages: int
+    price_per_page: float
+    currency: str
+    cost: float
+
+
 class ProcessingInfo(BaseModel):
     pipeline: str | None = None
     backend: str | None = None
     ocr_engine: str | None = None
     headers_removed: int = 0
     key_values_joined: int = 0
+    sarvam: SarvamCost | None = None
     docling_version: str
     duration_seconds: float
 
@@ -466,6 +481,7 @@ class JobSummary(BaseModel):
     pictures: int = 0
     ocr_engine: str | None = None
     duration_seconds: float | None = None
+    sarvam: SarvamCost | None = None
 
     @classmethod
     def from_envelope(cls, envelope: Envelope) -> JobSummary:
@@ -483,4 +499,5 @@ class JobSummary(BaseModel):
             duration_seconds=envelope.processing.duration_seconds
             if envelope.processing
             else None,
+            sarvam=envelope.processing.sarvam if envelope.processing else None,
         )

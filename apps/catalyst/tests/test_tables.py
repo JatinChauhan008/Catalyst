@@ -8,6 +8,13 @@ import json
 from pathlib import Path
 
 import pypdfium2
+from catalyst.models import (
+    ConvertRequest,
+    TableExtractionSettings,
+    TableManifest,
+    TableSource,
+)
+from catalyst.tables import ExtractionContext, extract_tables
 from docling_core.types.doc import (
     BoundingBox,
     CoordOrigin,
@@ -17,13 +24,6 @@ from docling_core.types.doc import (
     TableCell,
     TableData,
 )
-from catalyst.models import (
-    ConvertRequest,
-    TableExtractionSettings,
-    TableManifest,
-    TableSource,
-)
-from catalyst.tables import ExtractionContext, extract_tables
 from openpyxl import load_workbook
 
 TABLE_PAGE = (

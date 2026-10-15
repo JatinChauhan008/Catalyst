@@ -23,9 +23,9 @@ from docling_core.transforms.serializer.latex import LaTeXDocSerializer
 from docling_core.transforms.visualizer.layout_visualizer import LayoutVisualizer
 from docling_core.types.doc import DoclingDocument, ImageRefMode
 
+from catalyst.models import ChunkerType, ExportSettings
 from docling.datamodel.base_models import OutputFormat
 from docling.datamodel.service.responses import ChunkedDocumentResultItem
-from catalyst.models import ChunkerType, ExportSettings
 
 MEDIA_TYPES: dict[OutputFormat, str] = {
     OutputFormat.MARKDOWN: "text/markdown",

@@ -177,6 +177,15 @@ export interface PageLink {
   heading: string | null;
 }
 
+/** Sarvam bills Document Digitization per page; the price is the one in force when the job ran. */
+export interface SarvamCost {
+  jobs: number;
+  pages: number;
+  price_per_page: number;
+  currency: string;
+  cost: number;
+}
+
 export interface Envelope {
   schema_version: string;
   job_id: string;
@@ -187,6 +196,7 @@ export interface Envelope {
     pipeline: string | null;
     backend: string | null;
     ocr_engine: string | null;
+    sarvam?: SarvamCost | null;
     docling_version: string;
     duration_seconds: number;
   } | null;
@@ -221,4 +231,5 @@ export interface JobSummary {
   pictures: number;
   ocr_engine: string | null;
   duration_seconds: number | null;
+  sarvam?: SarvamCost | null;
 }

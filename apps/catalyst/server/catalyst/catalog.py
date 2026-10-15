@@ -15,6 +15,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from catalyst.options_schema import (
+    FieldSpec,
+    _unwrap,
+    apply_overrides,
+    describe_model,
+    describe_model_class,
+)
+from catalyst.sarvam import SarvamOcrOptions
 from docling.backend.abstract_backend import AbstractDocumentBackend
 from docling.backend.docling_parse_backend import ThreadedDoclingParseDocumentBackend
 from docling.backend.image_backend import ImageDocumentBackend
@@ -54,14 +62,6 @@ from docling.pipeline.simple_pipeline import SimplePipeline
 from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from docling.pipeline.video_pipeline import VideoPipeline
 from docling.pipeline.vlm_pipeline import VlmPipeline
-from catalyst.options_schema import (
-    FieldSpec,
-    _unwrap,
-    apply_overrides,
-    describe_model,
-    describe_model_class,
-)
-from catalyst.sarvam import SarvamOcrOptions
 
 
 @dataclass(frozen=True)

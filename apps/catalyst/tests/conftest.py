@@ -64,9 +64,18 @@ class FakeSarvam:
         def status(job_id: str) -> dict:
             job = self.jobs[job_id]
             job["polls"] += 1
+            if job["polls"] < 2:
+                return {"job_id": job_id, "status": "Running"}
+            pages = len(job["sizes"])
             return {
                 "job_id": job_id,
-                "status": "Running" if job["polls"] < 2 else "Completed",
+                "status": "Completed",
+                "usage": {
+                    "pages_total": pages,
+                    "pages_processed": pages,
+                    "pages_succeeded": pages,
+                    "pages_failed": 0,
+                },
             }
 
         @app.get("/doc-ai/v1/job/{job_id}/download-url")

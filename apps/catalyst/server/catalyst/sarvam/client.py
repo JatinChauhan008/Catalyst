@@ -87,6 +87,18 @@ class SarvamPageResult:
 
 
 @dataclass
+class DigitiseResult:
+    """The pages of one Digitise job and the number of pages Sarvam bills for it.
+
+    ``billed_pages`` is ``usage.pages_processed`` of the job status, or the
+    number of page images sent when the status has no usage.
+    """
+
+    pages: list[SarvamPageResult]
+    billed_pages: int
+
+
+@dataclass
 class SarvamDocAiClient:
     """A minimal synchronous client for the Digitise job workflow."""
 
@@ -105,10 +117,10 @@ class SarvamDocAiClient:
         language: str | None,
         model: str | None = None,
         content_type: str | None = None,
-    ) -> list[SarvamPageResult]:
+    ) -> DigitiseResult:
         """Digitise up to ``MAX_PAGES_PER_JOB`` page images in one job."""
         if not images:
-            return []
+            return DigitiseResult(pages=[], billed_pages=0)
         if len(images) > MAX_PAGES_PER_JOB:
             raise ValueError(
                 f"A Sarvam job accepts at most {MAX_PAGES_PER_JOB} pages, got {len(images)}."
@@ -119,7 +131,7 @@ class SarvamDocAiClient:
         job_id = self._submit(
             archive, language=language, model=model, content_type=content_type
         )
-        status = self._wait(job_id)
+        status, usage = self._wait(job_id)
         if status not in SUCCESS_STATES:
             raise SarvamApiError(f"Sarvam job {job_id} ended with status {status!r}.")
         if status == "partially_completed":
@@ -131,8 +143,12 @@ class SarvamDocAiClient:
             job_id, len(images), time.monotonic() - started,
             (time.monotonic() - started) / len(images),
         )  # fmt: skip
-        return parse_digitise_archive(
-            output, image_sizes=[image.size for image in images]
+        processed = usage.get("pages_processed")
+        return DigitiseResult(
+            pages=parse_digitise_archive(
+                output, image_sizes=[image.size for image in images]
+            ),
+            billed_pages=processed if isinstance(processed, int) else len(images),
         )
 
     # ------------------------------------------------------------------ HTTP
@@ -196,13 +212,15 @@ class SarvamDocAiClient:
             raise SarvamApiError(f"Sarvam returned no job_id: {response.text[:300]}")
         return str(job_id)
 
-    def _wait(self, job_id: str) -> str:
+    def _wait(self, job_id: str) -> tuple[str, Mapping[str, Any]]:
+        """Poll the job until it ends. Return its status and its ``usage`` object."""
         deadline = time.monotonic() + self.job_timeout_seconds
         while True:
             body = self._request("GET", f"/doc-ai/v1/job/{job_id}/status").json()
             status = str(body.get("status", "")).lower()
             if status in TERMINAL_STATES:
-                return status
+                usage = body.get("usage")
+                return status, usage if isinstance(usage, Mapping) else {}
             if time.monotonic() > deadline:
                 raise SarvamApiError(
                     f"Sarvam job {job_id} did not finish in {self.job_timeout_seconds}s."

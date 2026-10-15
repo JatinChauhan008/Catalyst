@@ -400,6 +400,8 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .history-card tbody tr { cursor: pointer; }
 .history-card tbody tr:hover { background: var(--surface-2); }
 .history-card tbody tr.selected { background: var(--accent-soft); }
+.history-cost { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.history-total { margin: 6px 0 0; font-size: 14px; }
 .history-name { display: block; font-weight: 650; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .endpoints td { padding: 10px 8px; }
 .method { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; letter-spacing: 0.04em; }

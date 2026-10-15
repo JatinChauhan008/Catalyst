@@ -23,11 +23,6 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from docling.cli.export_utils import _should_generate_export_images
-from docling.datamodel.base_models import ConversionStatus, DocumentStream, InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.document_converter import DocumentConverter
-from docling.exceptions import ConversionError
 from catalyst.catalog import AppDefaults, Catalog, FormatConfig
 from catalyst.exporter import BINARY_FORMATS, MEDIA_TYPES, export_document
 from catalyst.furniture import move_repeated_furniture
@@ -44,6 +39,7 @@ from catalyst.models import (
     PageHtmlSettings,
     PictureExtractionSettings,
     ProcessingInfo,
+    SarvamCost,
     SourceInfo,
     TableExtractionSettings,
     TableSource,
@@ -61,9 +57,15 @@ from catalyst.pictures import extract_pictures
 from catalyst.presets import register_presets
 from catalyst.sarvam import SarvamOcrOptions, register_sarvam_ocr
 from catalyst.sarvam.ocr_model import SARVAM_API_KEY_ENV
+from catalyst.sarvam.usage import take_usage
 from catalyst.tables import ExtractionContext, extract_tables, write_table_package
 from catalyst.upright import use_upright_backends
 from catalyst.validation import document_stats, validate
+from docling.cli.export_utils import _should_generate_export_images
+from docling.datamodel.base_models import ConversionStatus, DocumentStream, InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter
+from docling.exceptions import ConversionError
 
 _log = logging.getLogger(__name__)
 
@@ -82,6 +84,9 @@ class ServerSettings(BaseSettings):
     converter_cache_size: int = 4
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     web_dist: Path | None = None
+    # Sarvam Document Digitization price (docs.sarvam.ai/api/pricing, 2026-10).
+    sarvam_price_per_page: float = 0.5
+    sarvam_currency: str = "INR"
 
 
 def _docling_version() -> str:
@@ -304,6 +309,7 @@ class CatalystService:
             )
             return envelope
         duration = time.monotonic() - started
+        sarvam_usage = take_usage(result)
 
         fmt = result.input.format
         envelope.source.detected_format = fmt.value if fmt else None
@@ -318,6 +324,15 @@ class CatalystService:
         envelope.processing = self._processing_info(
             converter, fmt, request.formats, duration
         )
+        if sarvam_usage is not None:
+            price = self.settings.sarvam_price_per_page
+            envelope.processing.sarvam = SarvamCost(
+                jobs=sarvam_usage.jobs,
+                pages=sarvam_usage.pages,
+                price_per_page=price,
+                currency=self.settings.sarvam_currency,
+                cost=round(sarvam_usage.pages * price, 4),
+            )
 
         if fmt is None or result.status in (
             ConversionStatus.SKIPPED,

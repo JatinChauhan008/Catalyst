@@ -120,6 +120,23 @@ Limits that you must know:
   size to 10 when Sarvam is used).
 - Sarvam is a paid remote API. Page images leave your machine.
 
+### Sarvam cost
+
+Sarvam bills Document Digitization per page, not per token. For each
+conversion, Catalyst counts the pages that Sarvam processed (`usage.pages_processed`
+of each Sarvam job, or the pages sent when Sarvam does not report usage) and
+stores the cost in the envelope under `processing.sarvam`:
+
+```json
+{ "jobs": 1, "pages": 3, "price_per_page": 0.5, "currency": "INR", "cost": 1.5 }
+```
+
+The **History** page shows this cost for each job and the total for the
+listed jobs. The price is the server price when the job ran
+(`CATALYST_SARVAM_PRICE_PER_PAGE`, ₹0.5 per page from the Sarvam price list
+of 2026-10). It is an estimate: check your Sarvam dashboard for the billed
+amount. A Sarvam job that fails is not counted.
+
 ## Table extraction
 
 Turn on **Extract tables** (main screen, or `"tables": {"enabled": true}` in
@@ -217,7 +234,7 @@ the envelope:
   "job_id": "…",
   "status": "success | partial_success | failure | rejected",
   "source": { "filename": "…", "size_bytes": 0, "sha256": "…", "detected_format": "pdf" },
-  "processing": { "pipeline": "standard", "backend": "docling_parse", "ocr_engine": "sarvam", "duration_seconds": 0 },
+  "processing": { "pipeline": "standard", "backend": "docling_parse", "ocr_engine": "sarvam", "sarvam": { "pages": 0, "cost": 0, "…": "…" }, "duration_seconds": 0 },
   "stats": { "pages": 0, "characters": 0, "headings": 0, "tables": 0, "pictures": 0, "empty_pages": [] },
   "validation": { "passed": true, "checks": [{ "id": "has_content", "status": "pass", "message": "…" }] },
   "outputs": [{ "format": "json", "url": "/api/jobs/…/files/…", "content": "…" }],
@@ -238,6 +255,8 @@ Job files stay in `apps/catalyst/.data/jobs` (the newest 200 jobs).
 | `CATALYST_KEEP_JOBS` | 200 | Jobs to keep |
 | `CATALYST_CONVERTER_CACHE_SIZE` | 4 | Option sets that keep their loaded models |
 | `CATALYST_CORS_ORIGINS` | localhost:5173 | Allowed browser origins (JSON list) |
+| `CATALYST_SARVAM_PRICE_PER_PAGE` | 0.5 | Sarvam price per page, for the cost in the envelope and the history |
+| `CATALYST_SARVAM_CURRENCY` | INR | Currency of that price (ISO 4217 code) |
 
 ## Tests
 

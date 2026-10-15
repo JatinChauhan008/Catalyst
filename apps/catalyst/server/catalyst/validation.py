@@ -12,7 +12,6 @@ from docling_core.types.doc import (
     TitleItem,
 )
 
-from docling.datamodel.base_models import ConversionStatus
 from catalyst.models import (
     DocumentStats,
     OutputItem,
@@ -20,6 +19,7 @@ from catalyst.models import (
     ValidationReport,
     ValidationSettings,
 )
+from docling.datamodel.base_models import ConversionStatus
 
 
 def document_stats(document: DoclingDocument) -> DocumentStats:

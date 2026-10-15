@@ -11,6 +11,7 @@ from functools import partial
 
 from pydantic import BaseModel
 
+from catalyst.options_schema import register_preset_provider
 from docling.datamodel.asr_model_specs import AsrModelType
 from docling.datamodel.pipeline_options_asr_model import InlineAsrOptions
 from docling.datamodel.stage_model_specs import (
@@ -18,7 +19,6 @@ from docling.datamodel.stage_model_specs import (
     ObjectDetectionStagePresetMixin,
     StagePresetMixin,
 )
-from catalyst.options_schema import register_preset_provider
 
 Preset = tuple[str, str, str | None, Callable[[], BaseModel]]
 

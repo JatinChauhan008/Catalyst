@@ -7,6 +7,7 @@ label that repeats near the foot of several pages but is real content.
 
 from __future__ import annotations
 
+from catalyst.furniture import move_repeated_furniture
 from docling_core.types.doc import (
     BoundingBox,
     ContentLayer,
@@ -16,7 +17,6 @@ from docling_core.types.doc import (
     ProvenanceItem,
     Size,
 )
-from catalyst.furniture import move_repeated_furniture
 
 W, H = 600.0, 850.0
 

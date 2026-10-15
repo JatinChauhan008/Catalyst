@@ -1,7 +1,7 @@
 """Sarvam Vision OCR engine for Docling."""
 
-from docling.models.factories import get_ocr_factory
 from catalyst.sarvam.ocr_model import SarvamOcrModel, SarvamOcrOptions
+from docling.models.factories import get_ocr_factory
 
 
 def ocr_engines() -> dict[str, list[type[SarvamOcrModel]]]:

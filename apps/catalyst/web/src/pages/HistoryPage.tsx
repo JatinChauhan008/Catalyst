@@ -1,7 +1,23 @@
 import { useEffect, useState } from "react";
 import { fetchJob, fetchJobs } from "../api";
-import { ResultView, formatBytes, statusOf } from "../components/ResultView";
+import { ResultView, formatBytes, formatMoney, sarvamCostText, statusOf } from "../components/ResultView";
 import type { Envelope, JobSummary } from "../types";
+
+/** The Sarvam cost of the listed jobs, one line per currency. */
+function sarvamTotals(jobs: JobSummary[]): string[] {
+  const totals = new Map<string, { cost: number; pages: number }>();
+  for (const job of jobs) {
+    if (!job.sarvam) continue;
+    const total = totals.get(job.sarvam.currency) ?? { cost: 0, pages: 0 };
+    total.cost += job.sarvam.cost;
+    total.pages += job.sarvam.pages;
+    totals.set(job.sarvam.currency, total);
+  }
+  return [...totals].map(
+    ([currency, total]) =>
+      `${formatMoney(total.cost, currency)} for ${total.pages} page${total.pages === 1 ? "" : "s"}`,
+  );
+}
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -24,12 +40,19 @@ export function HistoryPage() {
     if (selected) fetchJob(selected).then(setEnvelope, (exc) => setError(String(exc)));
   }, [selected]);
 
+  const totals = jobs ? sarvamTotals(jobs) : [];
+
   return (
     <div className="page-narrow">
       <header className="page-head">
         <div>
           <h1>History</h1>
           <p className="muted">Past conversions on this server, newest first. The server keeps the latest 200.</p>
+          {totals.length > 0 && (
+            <p className="history-total">
+              Sarvam OCR cost of these jobs: <strong>{totals.join(" · ")}</strong>
+            </p>
+          )}
         </div>
         <button type="button" className="btn ghost" onClick={load}>
           Refresh
@@ -52,6 +75,7 @@ export function HistoryPage() {
                 <th>Pages</th>
                 <th>Tables</th>
                 <th>OCR</th>
+                <th title="Sarvam bills per page processed">Sarvam cost</th>
                 <th>Time</th>
                 <th>Converted</th>
               </tr>
@@ -78,6 +102,7 @@ export function HistoryPage() {
                     <td>{job.pages || "–"}</td>
                     <td>{job.tables || "–"}</td>
                     <td>{job.ocr_engine ?? "–"}</td>
+                    <td className="history-cost">{job.sarvam ? sarvamCostText(job.sarvam) : "–"}</td>
                     <td>{job.duration_seconds != null ? `${job.duration_seconds.toFixed(1)} s` : "–"}</td>
                     <td className="muted small">{when(job.created_at)}</td>
                   </tr>

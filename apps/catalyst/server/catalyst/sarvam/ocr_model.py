@@ -27,6 +27,12 @@ from docling_core.types.doc import BoundingBox, CoordOrigin, DocItemLabel
 from docling_core.types.doc.page import BoundingRectangle, TextCell
 from pydantic import ConfigDict, Field, SecretStr
 
+from catalyst.sarvam.client import (
+    MAX_PAGES_PER_JOB,
+    SarvamBlock,
+    SarvamDocAiClient,
+)
+from catalyst.sarvam.usage import record_usage
 from docling.datamodel.accelerator_options import AcceleratorOptions
 from docling.datamodel.base_models import Page
 from docling.datamodel.document import ConversionResult
@@ -38,11 +44,6 @@ from docling.models.stages.ocr.rapid_ocr_model import RapidOcrModel
 from docling.utils.ocr_language import OcrLanguage, OcrLanguageSupport
 from docling.utils.profiling import TimeRecorder
 from docling.utils.utils import chunkify
-from catalyst.sarvam.client import (
-    MAX_PAGES_PER_JOB,
-    SarvamBlock,
-    SarvamDocAiClient,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -302,14 +303,15 @@ class SarvamOcrModel(BaseOcrModel):
             assert page._backend is not None
             images.append(page._backend.get_page_image(scale=self.options.scale))
 
-        results = self._client.digitise_pages(
+        digitised = self._client.digitise_pages(
             images,
             language=self._language,
             model=self.options.model,
             content_type=self.options.content_type,
         )
+        record_usage(conv_res, pages=digitised.billed_pages)
 
-        for (page, rects), result in zip(chunk, results):
+        for (page, rects), result in zip(chunk, digitised.pages):
             if not result.ok:
                 _log.warning(
                     "Sarvam returned no result for page %s; the page keeps its PDF text only.",

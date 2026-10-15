@@ -97,6 +97,12 @@ def test_scanned_pdf_uses_sarvam_ocr(service, fake_sarvam) -> None:
     assert submission["language"] == "hi-IN"
     assert submission["output_format"] == "json"
 
+    cost = envelope.processing.sarvam
+    assert (cost.jobs, cost.pages) == (1, submission["pages"])
+    assert cost.cost == cost.pages * service.settings.sarvam_price_per_page
+    summary = next(job for job in service.list_jobs() if job.job_id == envelope.job_id)
+    assert summary.sarvam == cost
+
 
 def test_scanned_table_keeps_its_columns(service, fake_sarvam) -> None:
     """Sarvam has no word boxes; table regions are read locally so columns survive."""

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { OUTPUT_LABELS } from "../quick";
-import type { Envelope, OutputItem } from "../types";
+import type { Envelope, OutputItem, SarvamCost } from "../types";
 import { PagesSection, PicturesSection } from "./PagesAndPictures";
 import { TablesSection } from "./TablesSection";
 
@@ -8,6 +8,18 @@ export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 2 }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
+
+export function sarvamCostText(cost: SarvamCost): string {
+  return `${formatMoney(cost.cost, cost.currency)} (${cost.pages} page${cost.pages === 1 ? "" : "s"})`;
 }
 
 const STATUS_TEXT: Record<Envelope["status"], { title: string; tone: string }> = {
@@ -69,6 +81,7 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
     stats && stats.tables > 0 ? `${stats.tables} table${stats.tables === 1 ? "" : "s"}` : null,
     stats && stats.pictures > 0 ? `${stats.pictures} picture${stats.pictures === 1 ? "" : "s"}` : null,
     processing?.ocr_engine ? `OCR: ${processing.ocr_engine}` : null,
+    processing?.sarvam ? `Sarvam cost: ${sarvamCostText(processing.sarvam)}` : null,
     processing ? `${processing.duration_seconds.toFixed(1)} s` : null,
   ].filter(Boolean);
 
