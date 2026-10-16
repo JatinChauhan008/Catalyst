@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import zlib
 from pathlib import Path
 
 import pytest
@@ -148,10 +149,12 @@ def test_dost_writes_tables_translations_and_reports_what_is_uncertain(
     assert "| जिला | वर्षा |" in markdown and "| शिमला | 1250 |" in markdown
 
     # Sentences: exactly two columns, UTF-8, no table text, no code.
-    with (tmp_path / SENTENCES_FILE).open(encoding="utf-8", newline="") as stream:
+    with (tmp_path / SENTENCES_FILE).open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.reader(stream))
     assert rows[0] == ["original_sentence", "english_translation"]
     assert all(len(row) == 2 for row in rows)
+    # The byte order mark makes Excel read the file as UTF-8.
+    assert (tmp_path / SENTENCES_FILE).read_bytes().startswith(b"\xef\xbb\xbf")
     assert [row[0] for row in rows[1:]] == [
         "वार्षिक रिपोर्ट 2023",
         "इस वर्ष 1,250 मिमी वर्षा हुई।",
@@ -182,6 +185,70 @@ def test_dost_writes_tables_translations_and_reports_what_is_uncertain(
     assert (tmp_path / IMAGES_DIR).is_dir()
 
 
+def _pdf_with_cmyk_image(width: int = 4, height: int = 3) -> bytes:
+    """A one-page PDF with one Flate-compressed DeviceCMYK image."""
+    pixels = zlib.compress(bytes([0, 255, 255, 0]) * (width * height))  # red
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        b"/Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+        b"/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /FlateDecode "
+        b"/Length %d >>\nstream\n%s\nendstream" % (width, height, len(pixels), pixels),
+    ]
+    content = b"q 100 0 0 75 50 50 cm /Im1 Do Q"
+    objects.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content))
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return bytes(out)
+
+
+def test_a_cmyk_image_is_saved_as_an_rgb_png(tmp_path: Path) -> None:
+    import pypdfium2
+    import pypdfium2.raw as pdfium_c
+    from catalyst.dost.images import _extract
+    from PIL import Image
+
+    pdf = pypdfium2.PdfDocument(_pdf_with_cmyk_image())
+    [image] = list(pdf[0].get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,)))
+    path = _extract(image, tmp_path / "image")
+    with Image.open(path) as saved:
+        assert (path.suffix, saved.mode, saved.size) == (".png", "RGB", (4, 3))
+        red, green, blue = saved.convert("RGB").getpixel((0, 0))
+        assert red > 200 and green < 80 and blue < 80
+
+
+def test_sarvam_chat_style_answers_keep_only_the_translation() -> None:
+    from catalyst.dost.translate import _clean
+
+    chatty = 'The translation of the given Odia text "ନନଙ୍ଗଳିଆ" from Odia to English is:\n\n"Nangalia."'
+    assert _clean(chatty) == "Nangalia."
+    assert _clean("  The flower of the creeper.  ") == "The flower of the creeper."
+
+
+def test_translation_waits_out_a_rate_limit(fake_sarvam) -> None:
+    from catalyst.dost.translate import SarvamTranslator
+
+    fake_sarvam.rate_limited = 2  # the next two requests get 429
+    translator = SarvamTranslator(
+        api_key="test-key", base_url=fake_sarvam.base_url, workers=2
+    )
+    results = translator.translate_all(["हिमाचल में वर्षा हुई।", "यह अधिक है।"], "hi-IN")
+    assert [r.status for r in results] == ["translated", "translated"]
+    assert fake_sarvam.rate_limited == 0
+
+
 def test_a_pdf_gives_one_markdown_file_a_csv_and_ordered_unique_images(
     service,
 ) -> None:
@@ -202,7 +269,7 @@ def test_a_pdf_gives_one_markdown_file_a_csv_and_ordered_unique_images(
     assert report.tables.tables == 2
     assert 'colspan="3">% of Total</th>' in markdown  # merged header cells kept
 
-    with (target / SENTENCES_FILE).open(encoding="utf-8", newline="") as stream:
+    with (target / SENTENCES_FILE).open(encoding="utf-8-sig", newline="") as stream:
         sentences = [row[0] for row in csv.reader(stream)][1:]
     assert sentences[0].startswith("DocLayNet: A Large Human-Annotated Dataset")
     assert not any("1107470" in sentence for sentence in sentences)  # a table cell

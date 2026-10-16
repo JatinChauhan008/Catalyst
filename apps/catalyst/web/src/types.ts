@@ -250,6 +250,7 @@ export interface Envelope {
     backend: string | null;
     ocr_engine: string | null;
     sarvam?: SarvamCost | null;
+    ocr_language_from_font?: string | null;
     docling_version: string;
     duration_seconds: number;
   } | null;

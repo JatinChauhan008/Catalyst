@@ -33,6 +33,7 @@ from pydantic import ConfigDict, Field, SecretStr
 from catalyst import scripts
 from catalyst.sarvam.client import (
     MAX_PAGES_PER_JOB,
+    SarvamApiError,
     SarvamBlock,
     SarvamDocAiClient,
 )
@@ -228,10 +229,15 @@ def sarvam_language(options: SarvamOcrOptions) -> str | None:
     return code
 
 
+def language_script(code: str) -> scripts.Script | None:
+    """The Unicode script of a Sarvam language (`hi-IN`), when it has a clear one."""
+    return _SARVAM_SCRIPTS.get(code)
+
+
 def sarvam_script(options: SarvamOcrOptions) -> scripts.Script | None:
     """The Unicode script of the document language, when Sarvam's language has one."""
     code = sarvam_language(options)
-    return _SARVAM_SCRIPTS.get(code) if code else None
+    return language_script(code) if code else None
 
 
 class SarvamOcrModel(BaseOcrModel):
@@ -352,12 +358,20 @@ class SarvamOcrModel(BaseOcrModel):
             assert page._backend is not None
             images.append(page._backend.get_page_image(scale=self.options.scale))
 
-        digitised = self._client.digitise_pages(
-            images,
-            language=self._language,
-            model=self.options.model,
-            content_type=self.options.content_type,
-        )
+        try:
+            digitised = self._client.digitise_pages(
+                images,
+                language=self._language,
+                model=self.options.model,
+                content_type=self.options.content_type,
+            )
+        except SarvamApiError as exc:
+            # Name the pages, so that the report says what is missing and the
+            # user can convert just those pages again.
+            numbers = ", ".join(str(page.page_no + 1) for page, _ in chunk)
+            raise SarvamApiError(
+                f"Sarvam OCR failed for pages {numbers}: {exc}"
+            ) from exc
         record_usage(conv_res, pages=digitised.billed_pages)
 
         for (page, rects), result in zip(chunk, digitised.pages):

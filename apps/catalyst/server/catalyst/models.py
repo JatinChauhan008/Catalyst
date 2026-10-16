@@ -317,6 +317,13 @@ class ProcessingInfo(BaseModel):
         description="Tables that take their rows, columns and merged cells from Sarvam.",
     )
     sarvam: SarvamCost | None = None
+    ocr_language_from_font: str | None = Field(
+        default=None,
+        description=(
+            "Set when no OCR language was given and Catalyst took it from a legacy "
+            "Indic font of the PDF (Kruti Dev, Akruti Oriya, ...)."
+        ),
+    )
     docling_version: str
     duration_seconds: float
 

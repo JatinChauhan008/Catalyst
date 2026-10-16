@@ -160,6 +160,13 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Pages: {report.pages} (scanned: {report.scanned_pages or 'none'}; OCR: {report.ocr_engine or 'off'})"
     )
+    from_font = (
+        envelope.processing.ocr_language_from_font if envelope.processing else None
+    )
+    print(
+        f"Language: {report.source_language or 'not set'}"
+        + (f" ({from_font})" if from_font else "")
+    )
     print(f"Tables: {report.tables.tables} -> {TABLES_FILE}")
     statuses = ", ".join(
         f"{k} {v}" for k, v in sorted(report.sentences.by_status.items())

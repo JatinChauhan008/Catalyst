@@ -51,6 +51,8 @@ class DostInput:
     sarvam_base_url: str = "https://api.sarvam.ai"
     conversion_errors: tuple[str, ...] = ()
     partial: bool = False
+    # Why the OCR language was chosen, when Catalyst chose it from a font.
+    language_note: str | None = None
 
 
 def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostReport:
@@ -58,6 +60,14 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
     issues: list[DostIssue] = []
     document = source.document
 
+    if source.language_note:
+        issues.append(
+            DostIssue(
+                severity="info",
+                component="document",
+                message=f"No language was given; OCR language {source.language_note}.",
+            )
+        )
     if source.partial:
         issues.append(
             DostIssue(
@@ -120,7 +130,11 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
         )
         translations = [copy_or_skip(text, "disabled", reason) for text in originals]
 
-    with (target / SENTENCES_FILE).open("w", encoding="utf-8", newline="") as stream:
+    # UTF-8 with a byte order mark: without it, Excel reads the file in the
+    # ANSI code page and shows Odia, Hindi, ... as "à¬..." symbols.
+    with (target / SENTENCES_FILE).open(
+        "w", encoding="utf-8-sig", newline=""
+    ) as stream:
         writer = csv.writer(stream)
         writer.writerow(["original_sentence", "english_translation"])
         writer.writerows(

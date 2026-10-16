@@ -13,6 +13,7 @@ does not translate keeps an empty translation and is reported.
 from __future__ import annotations
 
 import logging
+import random
 import re
 import threading
 import time
@@ -24,6 +25,7 @@ from dataclasses import dataclass, field
 import requests
 
 from catalyst.dost.models import TranslationStatus
+from catalyst.sarvam.client import is_retryable, network_error_message
 
 _log = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ _ENGLISH_WORDS = frozenset(
 )
 # Letters in an Indian script that make a mostly English sentence non-English.
 _MIN_MIXED_LETTERS = 3
+_MAX_BACKOFF_SECONDS = 60.0
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 
@@ -163,9 +166,13 @@ class SarvamTranslator:
     workers: int = 4
     request_timeout_seconds: float = 60.0
     max_retries: int = 3
+    # Retries of one request after "429 Too Many Requests"; with the backoff
+    # this waits about four minutes before the sentence counts as failed.
+    rate_limit_retries: int = 8
     characters_sent: int = 0
     _session: requests.Session = field(default_factory=requests.Session)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _paused_until: float = 0.0
 
     def translate_all(
         self, sentences: list[str], document_language: str | None
@@ -219,14 +226,32 @@ class SarvamTranslator:
             "numerals_format": "international",
         }
         delay = 1.0
-        for attempt in range(self.max_retries + 1):
-            response = self._session.post(
-                f"{self.base_url.rstrip('/')}{TRANSLATE_PATH}",
-                json=payload,
-                headers={"api-subscription-key": self.api_key},
-                timeout=self.request_timeout_seconds,
-            )
-            if response.status_code in (429, 500, 503) and attempt < self.max_retries:
+        errors = rate_limited = 0
+        while True:
+            self._wait_for_rate_limit()
+            try:
+                response = self._session.post(
+                    f"{self.base_url.rstrip('/')}{TRANSLATE_PATH}",
+                    json=payload,
+                    headers={"api-subscription-key": self.api_key},
+                    timeout=self.request_timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                errors += 1
+                # A translation creates nothing on the server, so unlike a
+                # Digitise job it is safe to send again after any network error.
+                if errors <= self.max_retries and is_retryable(exc, "GET"):
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                raise RuntimeError(network_error_message(exc, self.base_url)) from exc
+            if response.status_code == 429 and rate_limited < self.rate_limit_retries:
+                # Too many requests: all workers pause, then this one retries.
+                rate_limited += 1
+                self._pause(_retry_after(response) or _backoff(rate_limited))
+                continue
+            if response.status_code in (500, 502, 503) and errors < self.max_retries:
+                errors += 1
                 time.sleep(delay)
                 delay *= 2
                 continue
@@ -237,10 +262,51 @@ class SarvamTranslator:
             with self._lock:
                 self.characters_sent += len(text)
             body = response.json()
-            return str(body.get("translated_text") or ""), str(
+            return _clean(str(body.get("translated_text") or "")), str(
                 body.get("source_language_code") or source
             )
-        raise RuntimeError("Sarvam Translate retries exhausted.")
+
+    def _pause(self, seconds: float) -> None:
+        with self._lock:
+            self._paused_until = max(self._paused_until, time.monotonic() + seconds)
+
+    def _wait_for_rate_limit(self) -> None:
+        while True:
+            with self._lock:
+                wait = self._paused_until - time.monotonic()
+            if wait <= 0:
+                return
+            time.sleep(wait)
+
+
+def _retry_after(response: requests.Response) -> float | None:
+    value = response.headers.get("Retry-After", "")
+    try:
+        return min(float(value), _MAX_BACKOFF_SECONDS)
+    except ValueError:
+        return None
+
+
+def _backoff(attempt: int) -> float:
+    """2, 4, 8, ... seconds, at most one minute, with jitter so workers spread out."""
+    return min(2.0**attempt, _MAX_BACKOFF_SECONDS) * random.uniform(0.8, 1.2)
+
+
+# For very short inputs (one word), Sarvam sometimes answers like a chat
+# assistant: 'The translation of the given Odia text "..." from Odia to
+# English is:\n\n"Nangalia."' Keep only the answer.
+_CHATTY = re.compile(
+    r"^\s*(?:the\s+)?translation\s+of\s+the\s+given\b.*?\bis\s*:\s*(?P<answer>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _clean(text: str) -> str:
+    match = _CHATTY.match(text)
+    if match is None:
+        return text.strip()
+    answer = " ".join(match.group("answer").split())
+    return answer.strip("\"'“” ")
 
 
 def _pieces(sentence: str, limit: int) -> list[str]:

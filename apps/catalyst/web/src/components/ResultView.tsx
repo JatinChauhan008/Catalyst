@@ -82,6 +82,7 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
     stats && stats.tables > 0 ? `${stats.tables} table${stats.tables === 1 ? "" : "s"}` : null,
     stats && stats.pictures > 0 ? `${stats.pictures} picture${stats.pictures === 1 ? "" : "s"}` : null,
     processing?.ocr_engine ? `OCR: ${processing.ocr_engine}` : null,
+    processing?.ocr_language_from_font ? `Language: ${processing.ocr_language_from_font}` : null,
     processing?.sarvam ? `Sarvam cost: ${sarvamCostText(processing.sarvam)}` : null,
     processing ? `${processing.duration_seconds.toFixed(1)} s` : null,
   ].filter(Boolean);

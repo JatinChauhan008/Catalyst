@@ -29,6 +29,7 @@ from catalyst.dost.pipeline import DostInput, run_dost
 from catalyst.exporter import BINARY_FORMATS, MEDIA_TYPES, export_document
 from catalyst.furniture import move_repeated_furniture
 from catalyst.key_values import join_key_values
+from catalyst.legacy_fonts import dominant_language, find_legacy_fonts
 from catalyst.models import (
     ConvertRequest,
     ConvertSettings,
@@ -60,6 +61,7 @@ from catalyst.presets import register_presets
 from catalyst.sarvam import SarvamOcrOptions, register_sarvam_ocr
 from catalyst.sarvam.ocr_model import (
     SARVAM_API_KEY_ENV,
+    language_script,
     sarvam_language,
     sarvam_script,
 )
@@ -294,17 +296,32 @@ class CatalystService:
             or page_settings.enabled
             or dost_settings.enabled
         )
-        try:
-            converter, lock = self._converter(
-                request.formats,
+
+        def build(formats: dict[str, FormatConfig]):
+            return self._converter(
+                formats,
                 settings.allowed_formats,
                 images_needed,
                 settings.straighten_scanned_pages,
                 settings.ignore_text_layer,
                 settings.ignore_garbled_text_layer,
             )
+
+        try:
+            converter, lock = build(request.formats)
+            font_language, font_note, font_problem = self._legacy_font_check(
+                data, request, converter, settings.ignore_text_layer
+            )
+            if font_language is not None:
+                converter, lock = build(
+                    _with_ocr_language(request.formats, font_language)
+                )
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
+        if font_problem is not None:
+            envelope.errors.append(
+                ErrorInfo(component="legacy_font", message=font_problem)
+            )
 
         started = time.monotonic()
         stream = DocumentStream(name=envelope.source.filename, stream=BytesIO(data))
@@ -346,6 +363,7 @@ class CatalystService:
         envelope.processing = self._processing_info(
             converter, fmt, request.formats, duration
         )
+        envelope.processing.ocr_language_from_font = font_note
         if sarvam_usage is not None:
             price = self.settings.sarvam_price_per_page
             envelope.processing.sarvam = SarvamCost(
@@ -617,6 +635,65 @@ class CatalystService:
                 )
             )
 
+    @staticmethod
+    def _legacy_font_check(
+        data: bytes,
+        request: ConvertRequest,
+        converter: DocumentConverter,
+        text_layer_ignored: bool,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Look for legacy Indic fonts, whose text layer is not Unicode.
+
+        Returns the OCR language to use instead of the default, a note that says
+        why, and a problem to report. Each is None when it does not apply.
+        """
+        if not data.startswith(b"%PDF"):
+            return None, None, None
+        try:
+            fonts = find_legacy_fonts(data)
+        except Exception:
+            # A broken PDF: the conversion reports it.
+            _log.warning("Could not read the fonts of the PDF", exc_info=True)
+            return None, None, None
+        if not fonts:
+            return None, None, None
+        language = dominant_language(fonts)
+        names = ", ".join(dict.fromkeys(font.name for font in fonts[:3]))
+        wanted = language or "the language of the document"
+        ocr = _ocr_options(converter, InputFormat.PDF)
+        if not isinstance(ocr, SarvamOcrOptions):
+            if text_layer_ignored:
+                return None, None, None  # every page is read with OCR anyway
+            return (
+                None,
+                None,
+                (
+                    f"The PDF uses the legacy font {names}: its text layer is not Unicode "
+                    f"and gives unreadable text. Use Sarvam OCR with the language {wanted}."
+                ),
+            )
+        current = sarvam_language(ocr)
+        if language is not None and not _user_ocr_language(request):
+            if language != current:
+                _log.info("OCR language %s, from the legacy font %s", language, names)
+                return language, f"{language}, from the legacy font {names}", None
+            return None, None, None
+        if (
+            language is not None
+            and current is not None
+            and (language_script(language) != language_script(current))
+        ):
+            return (
+                None,
+                None,
+                (
+                    f"The PDF uses the legacy font {names} ({language}), but the OCR "
+                    f"language is {current}. Pages in that font can be read wrongly; "
+                    f"set the language to {language}."
+                ),
+            )
+        return None, None, None
+
     def _run_dost(
         self,
         result: Any,
@@ -672,6 +749,9 @@ class CatalystService:
                         for error in envelope.errors
                     ),
                     partial=result.status == ConversionStatus.PARTIAL_SUCCESS,
+                    language_note=envelope.processing.ocr_language_from_font
+                    if envelope.processing
+                    else None,
                 ),
                 settings,
                 target,
@@ -771,6 +851,32 @@ class CatalystService:
 
 def _apply(model: BaseModel, overrides: dict[str, Any]) -> Any:
     return apply_overrides(model, overrides) if overrides else model
+
+
+def _user_ocr_language(request: ConvertRequest) -> bool:
+    """True when the request sets the OCR language of PDFs."""
+    config = request.formats.get(InputFormat.PDF.value)
+    ocr = config.pipeline_options.get("ocr_options") if config else None
+    return isinstance(ocr, dict) and bool(ocr.get("lang"))
+
+
+def _with_ocr_language(
+    formats: dict[str, FormatConfig], language: str
+) -> dict[str, FormatConfig]:
+    """The format options with this OCR language for PDFs."""
+    pdf = formats.get(InputFormat.PDF.value, FormatConfig())
+    pipeline_options = dict(pdf.pipeline_options)
+    ocr = pipeline_options.get("ocr_options")
+    pipeline_options["ocr_options"] = {
+        **(ocr if isinstance(ocr, dict) else {}),
+        "lang": [language],
+    }
+    return {
+        **formats,
+        InputFormat.PDF.value: pdf.model_copy(
+            update={"pipeline_options": pipeline_options}
+        ),
+    }
 
 
 def _ocr_options(converter: DocumentConverter, fmt: InputFormat | None) -> Any:

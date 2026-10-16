@@ -221,7 +221,8 @@ when the document could not be converted.
   HTML table in the Markdown file, so merged cells and multi-row headers keep
   their structure and no header is invented.
 - **Sentences**: headings, paragraphs, list items, captions and footnotes, in
-  reading order, one sentence per row (UTF-8, no BOM). Table cells, table
+  reading order, one sentence per row (UTF-8 with a BOM, so that Excel shows
+  Odia, Hindi and other scripts correctly). Table cells, table
   captions and table titles are only in the tables file. Code, formulas and
   text inside a picture (chart labels) are left out and counted in the report.
   Sentences end at `.`, `!`, `?`, the Devanagari dandas `।` `॥`, the Urdu full
@@ -268,6 +269,28 @@ For other OCR engines, turn on **Scanned document** (or
 is then read with OCR. Without it, tables keep the garbled letters, because
 Docling's table model takes its words from the PDF text layer even in
 full-page OCR mode.
+
+The garbled-text check needs the document language. When the Sarvam OCR
+language is not set, Catalyst reads the font names of the PDF: a known legacy
+font (Kruti Dev, DevLys, Chanakya, Akruti, the "-TT" families, SutonnyMJ,
+Bamini, ...) gives the language (`hi-IN`, `od-IN`, `bn-IN`, ...), and the
+envelope says so in `processing.ocr_language_from_font`. A language that you set
+is kept; when its script does not match the font, the envelope has a
+`legacy_font` error. A legacy font read without Sarvam OCR also gives a
+`legacy_font` error, because its text would be unreadable. Fonts without a name
+(Type 3 fonts such as `TT3B3t00`) cannot be recognized: set the language for
+such documents.
+
+## Network errors
+
+Sarvam requests that fail before they reach Sarvam (DNS lookup, refused
+connection) are retried for about two and a half minutes. A Digitise request
+that may have reached Sarvam is not sent again, so that no job is billed twice.
+When a job still fails, the error names its pages (`Sarvam OCR failed for
+pages 11, 12, ...`); convert those pages again with the page range. Translation
+requests are retried after any network error, and after "429 Too Many
+Requests" all translation workers wait (up to about four minutes), following
+`Retry-After`.
 
 ## Options
 

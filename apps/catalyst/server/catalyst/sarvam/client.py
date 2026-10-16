@@ -32,8 +32,10 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
+import urllib3
 from PIL.Image import Image
 
 _log = logging.getLogger(__name__)
@@ -113,7 +115,11 @@ class SarvamDocAiClient:
     request_timeout_seconds: float = 120.0
     poll_interval_seconds: float = 2.0
     job_timeout_seconds: float = 900.0
+    # Retries after "busy" answers (429, 502, 503).
     max_retries: int = 3
+    # Retries after network failures (DNS, refused or dropped connection). With
+    # `network_wait` they bridge an outage of about two and a half minutes.
+    network_retries: int = 8
     session: requests.Session = field(default_factory=requests.Session)
 
     def digitise_pages(
@@ -166,18 +172,34 @@ class SarvamDocAiClient:
 
     def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         delay = 1.0
-        for attempt in range(self.max_retries + 1):
-            response = self.session.request(
-                method,
-                self._url(path),
-                headers=self._headers(),
-                timeout=self.request_timeout_seconds,
-                **kwargs,
-            )
-            if response.status_code in (429, 503) and attempt < self.max_retries:
+        network_failures = busy = 0
+        while True:
+            try:
+                response = self.session.request(
+                    method,
+                    self._url(path),
+                    headers=self._headers(),
+                    timeout=self.request_timeout_seconds,
+                    **kwargs,
+                )
+            except requests.RequestException as exc:
+                network_failures += 1
+                if network_failures <= self.network_retries and is_retryable(
+                    exc, method
+                ):
+                    wait = network_wait(network_failures)
+                    _log.warning(
+                        "Sarvam not reachable (%s); retry %d of %d in %.0f s.",
+                        type(exc).__name__, network_failures, self.network_retries, wait,
+                    )  # fmt: skip
+                    time.sleep(wait)
+                    continue
+                raise SarvamApiError(network_error_message(exc, self.base_url)) from exc
+            if response.status_code in (429, 502, 503) and busy < self.max_retries:
+                busy += 1
                 retry_after = response.headers.get("Retry-After")
                 wait = (
-                    float(retry_after)
+                    min(float(retry_after), _MAX_WAIT_SECONDS)
                     if retry_after and retry_after.isdigit()
                     else delay
                 )
@@ -190,7 +212,6 @@ class SarvamDocAiClient:
             if response.status_code >= 400:
                 raise SarvamApiError(_error_message(response))
             return response
-        raise SarvamApiError("Sarvam request retries exhausted.")
 
     def _submit(
         self,
@@ -235,15 +256,68 @@ class SarvamDocAiClient:
 
     def _download(self, job_id: str) -> bytes:
         target = self._request("GET", f"/doc-ai/v1/job/{job_id}/download-url").json()
-        response = self.session.request(
-            str(target.get("method") or "GET"),
-            target["url"],
-            headers=target.get("headers") or {},
-            timeout=self.request_timeout_seconds,
-        )
+        method = str(target.get("method") or "GET")
+        failures = 0
+        while True:
+            try:
+                response = self.session.request(
+                    method,
+                    target["url"],
+                    headers=target.get("headers") or {},
+                    timeout=self.request_timeout_seconds,
+                )
+                break
+            except requests.RequestException as exc:
+                failures += 1
+                if failures <= self.network_retries and is_retryable(exc, method):
+                    time.sleep(network_wait(failures))
+                    continue
+                raise SarvamApiError(network_error_message(exc, target["url"])) from exc
         if response.status_code >= 400:
             raise SarvamApiError(_error_message(response))
         return response.content
+
+
+_MAX_WAIT_SECONDS = 30.0
+
+
+def network_wait(failures: int) -> float:
+    """Seconds to wait after the n-th network failure: 2, 4, 8, 16, then 30."""
+    return min(2.0**failures, _MAX_WAIT_SECONDS)
+
+
+def _never_sent(exc: requests.RequestException) -> bool:
+    """True when the request did not reach the server: DNS or connect failure."""
+    if isinstance(exc, requests.ConnectTimeout):
+        return True
+    if not isinstance(exc, requests.ConnectionError):
+        return False
+    reason = exc.args[0] if exc.args else None
+    # requests wraps urllib3's MaxRetryError; its reason is the first failure.
+    if isinstance(reason, urllib3.exceptions.MaxRetryError):
+        reason = reason.reason
+    return isinstance(reason, urllib3.exceptions.NewConnectionError)
+
+
+def is_retryable(exc: requests.RequestException, method: str) -> bool:
+    """A network error that is safe to retry.
+
+    A GET is always safe. A POST is retried only when it never reached the
+    server, so a Digitise job is not created (and billed) twice.
+    """
+    if method.upper() == "GET":
+        return isinstance(exc, requests.ConnectionError | requests.Timeout)
+    return _never_sent(exc)
+
+
+def network_error_message(exc: requests.RequestException, base_url: str) -> str:
+    host = urlsplit(base_url).hostname or base_url
+    if _never_sent(exc):
+        return (
+            f"Cannot reach Sarvam ({host}): the DNS lookup or the connection failed. "
+            f"Check the internet connection and try again. ({type(exc).__name__})"
+        )
+    return f"Sarvam request to {host} failed: {type(exc).__name__}: {exc}"
 
 
 def _error_message(response: requests.Response) -> str:

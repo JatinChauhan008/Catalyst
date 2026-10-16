@@ -39,6 +39,8 @@ class FakeSarvam:
     jobs: dict[str, dict] = field(default_factory=dict)
     submissions: list[dict] = field(default_factory=list)
     translations: list[dict] = field(default_factory=list)
+    # The next requests to /translate that get "429 Too Many Requests".
+    rate_limited: int = 0
 
     def app(self) -> FastAPI:
         app = FastAPI()
@@ -86,6 +88,13 @@ class FakeSarvam:
         @app.post("/translate")
         async def translate(request: Request) -> JSONResponse:
             # "EN: <input>"; an input with "FAIL" fails; "DROP" loses the numbers.
+            if self.rate_limited > 0:
+                self.rate_limited -= 1
+                return JSONResponse(
+                    {"error": {"message": "Rate limit exceeded"}},
+                    status_code=429,
+                    headers={"Retry-After": "1"},
+                )
             body = await request.json()
             self.translations.append(body)
             text = body["input"]

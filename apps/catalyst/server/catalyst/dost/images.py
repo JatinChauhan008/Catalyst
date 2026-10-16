@@ -164,10 +164,7 @@ def _from_pdf(
                     seen[key].occurrences += 1
                     result.counts.duplicates_skipped += 1
                     continue
-                prefix = work / f"embedded-{len(candidates):05d}"
-                obj.extract(prefix, fb_format="png")
-                written = _written_file(work, prefix.name)
-                written = _browser_format(written)
+                written = _extract(obj, work / f"embedded-{len(candidates):05d}")
             except Exception as exc:
                 result.counts.failed += 1
                 result.issues.append(
@@ -254,6 +251,27 @@ def _page_objects(page) -> tuple[list[tuple[object, Box]], int]:
         ):
             visible_text += 1
     return images, visible_text
+
+
+def _extract(obj, prefix: Path) -> Path:
+    """Write a stored image in its own encoding where possible, else as PNG.
+
+    pdfium decodes some images (CMYK, Lab, ...) into modes that PNG cannot
+    store; those are written from pdfium's RGB bitmap of the image instead,
+    at the image's own pixel size.
+    """
+    try:
+        obj.extract(prefix, fb_format="png")
+        return _browser_format(_written_file(prefix.parent, prefix.name))
+    except OSError:
+        for partial in prefix.parent.glob(f"{prefix.name}.*"):
+            partial.unlink()
+    image = obj.get_bitmap(render=False).to_pil()
+    if image.mode not in ("RGB", "RGBA", "L", "LA"):
+        image = image.convert("RGB")
+    path = prefix.with_suffix(".png")
+    image.save(path)
+    return path
 
 
 def _written_file(work: Path, stem: str) -> Path:
