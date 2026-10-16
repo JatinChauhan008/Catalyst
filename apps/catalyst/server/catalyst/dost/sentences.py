@@ -1,9 +1,10 @@
 """Collect the written text outside tables, in reading order, and split it into sentences.
 
-Table cells, table captions, table footnotes and the title line found above a
-table go to the tables file, not here. Text that the layout model found
-inside a picture (labels of a chart) and code or formulas are left out and
-counted in the report. Page headers and footers are not body text.
+Table cells, table captions and table footnotes go to the tables file, not here.
+The title found above a table stays here as well, because it is only a guess.
+Text that the layout model found inside a picture (labels of a chart) and code
+or formulas are left out and counted in the report. Page headers and footers
+are not body text.
 """
 
 from __future__ import annotations
@@ -20,8 +21,6 @@ from docling_core.types.doc import (
     TableItem,
     TextItem,
 )
-
-from catalyst.models import TableRecord
 
 # Prose labels. Headings are kept whole (one row); the others are split.
 _HEADINGS = frozenset({DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER})
@@ -57,13 +56,11 @@ class CollectedText:
     duplicates_removed: int
 
 
-def collect_sentences(
-    document: DoclingDocument, tables: list[TableRecord]
-) -> CollectedText:
+def collect_sentences(document: DoclingDocument) -> CollectedText:
     items: list[NodeItem] = [
         item for item, _ in document.iterate_items(with_groups=False)
     ]
-    excluded = _table_text_refs(document, items, tables)
+    excluded = _table_text_refs(document, items)
     inside_pictures = _descendant_refs(
         document, [item for item in items if isinstance(item, PictureItem)]
     )
@@ -128,24 +125,18 @@ def _descendant_refs(document: DoclingDocument, roots: list[NodeItem]) -> set[st
     return refs
 
 
-def _table_text_refs(
-    document: DoclingDocument, items: list[NodeItem], tables: list[TableRecord]
-) -> set[str]:
-    """Text that belongs to a table: its cells' items, captions, footnotes and title."""
+def _table_text_refs(document: DoclingDocument, items: list[NodeItem]) -> set[str]:
+    """Text that belongs to a table: its cells' items, captions and footnotes.
+
+    The title found above a table stays in the sentences too: it is only a
+    guess (a short paragraph right above a table looks the same), and a wrong
+    guess would drop a sentence from the CSV.
+    """
     table_items = [item for item in items if isinstance(item, TableItem)]
     refs = _descendant_refs(document, table_items)
     for table in table_items:
         refs.update(ref.cref for ref in table.captions)
         refs.update(ref.cref for ref in table.footnotes)
-    titles = {record.title for record in tables if record.title}
-    for position, item in enumerate(items):
-        if not isinstance(item, TableItem):
-            continue
-        # The title is one of the few items right above the table.
-        for before in reversed(items[max(0, position - 4) : position]):
-            if isinstance(before, TextItem) and before.text.strip() in titles:
-                refs.add(before.self_ref)
-                break
     return refs
 
 

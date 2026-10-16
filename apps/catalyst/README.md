@@ -223,8 +223,14 @@ when the document could not be converted.
 - **Sentences**: headings, paragraphs, list items, captions and footnotes, in
   reading order, one sentence per row (UTF-8 with a BOM, so that Excel shows
   Odia, Hindi and other scripts correctly). Table cells, table
-  captions and table titles are only in the tables file. Code, formulas and
+  captions and table footnotes are only in the tables file; a title line found
+  above a table is in both files, because it is only a guess. Code, formulas and
   text inside a picture (chart labels) are left out and counted in the report.
+- **Sentences to check**: `document_sentence_problems.csv` lists every sentence
+  without a translation, or with one to check (numbers missing, language
+  assumed), with its CSV row, page, the reason in plain words, what to do, and
+  the technical message. The report has the same list (`sentence_problems`),
+  and the web UI shows it as a table with filters.
   Sentences end at `.`, `!`, `?`, the Devanagari dandas `।` `॥`, the Urdu full
   stop and the CJK marks; abbreviations (`Dr.`, `Fig. 2`, `e.g.`) and initials
   do not end a sentence.
@@ -232,7 +238,10 @@ when the document could not be converted.
   the Sarvam Translate API (`mayura:v1` when the language must be detected,
   else `sarvam-translate:v1`; numbers in 0–9). The language comes from the
   script of the sentence and from `source_language` (or the Sarvam OCR
-  language). English sentences and numbers are copied. A sentence that fails,
+  language). When Sarvam cannot detect the language of a sentence, it is sent
+  again with the language that Sarvam found for the other sentences in that
+  script (or Hindi for Devanagari, Bengali for Bengali script), and listed as
+  "language assumed". English sentences and numbers are copied. A sentence that fails,
   or whose language Sarvam does not translate (for example French), keeps an
   empty translation, and the report lists its CSV row. A translation that does
   not contain every number of the original is also listed. Sarvam bills

@@ -132,6 +132,25 @@ export interface DostImage {
   caption: string | null;
 }
 
+export type SentenceProblemKind =
+  | "not_translated"
+  | "language_not_supported"
+  | "translation_off"
+  | "numbers_differ"
+  | "language_assumed";
+
+/** One sentence without a translation, or with one to check. */
+export interface SentenceProblem {
+  row: number;
+  page: number | null;
+  original: string;
+  translation: string;
+  kind: SentenceProblemKind;
+  reason: string;
+  action: string | null;
+  detail: string | null;
+}
+
 /** Tables as Markdown, sentences with English translations, images as files. */
 export interface DostReport {
   complete: boolean;
@@ -157,6 +176,7 @@ export interface DostReport {
     failed: number;
   };
   image_files: DostImage[];
+  sentence_problems?: SentenceProblem[];
   issues: DostIssue[];
 }
 

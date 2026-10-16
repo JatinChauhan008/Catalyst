@@ -87,6 +87,7 @@ class _Language:
     code: str | None = None
     model: str | None = None
     detail: str | None = None
+    script: str | None = None
 
 
 def sentence_language(sentence: str, document_language: str | None) -> _Language:
@@ -137,11 +138,29 @@ def sentence_language(sentence: str, document_language: str | None) -> _Language
         code = default
     else:
         # Hindi or Marathi, Bengali or Assamese: mayura finds the language.
-        return _Language(None, code="auto", model="mayura:v1")
+        return _Language(None, code="auto", model="mayura:v1", script=script)
     model = "sarvam-translate:v1"
     if code not in _SARVAM_TRANSLATE_LANGUAGES:
-        return _Language("unsupported", detail=f"Sarvam does not translate {code}.")
-    return _Language(None, code=code, model=model)
+        return _Language(
+            "unsupported", detail=f"Sarvam does not translate {code}.", script=script
+        )
+    return _Language(None, code=code, model=model, script=script)
+
+
+# The main language of a script whose language Sarvam could not detect.
+_SCRIPT_MAIN_LANGUAGE = {"devanagari": "hi-IN", "bengali": "bn-IN"}
+
+
+def _assumed_language(script: str | None, detected: dict[str, Counter[str]]) -> str:
+    found = detected.get(script or "")
+    if found:
+        return found.most_common(1)[0][0]
+    return _SCRIPT_MAIN_LANGUAGE.get(script or "", "hi-IN")
+
+
+def is_detection_failure(detail: str | None) -> bool:
+    """True for Sarvam's answer when it cannot tell the language of a text."""
+    return bool(detail) and "detect the language" in (detail or "").lower()
 
 
 def numbers_of(text: str) -> Counter[str]:
@@ -178,15 +197,58 @@ class SarvamTranslator:
         self, sentences: list[str], document_language: str | None
     ) -> list[Translation]:
         unique = list(dict.fromkeys(sentences))
+        languages = [sentence_language(s, document_language) for s in unique]
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            results = list(
-                pool.map(lambda s: self._translate(s, document_language), unique)
-            )
+            results = list(pool.map(self._translate, unique, languages))
+
+        # Sarvam's language detection ("auto") fails for some sentences, often
+        # short or OCR-damaged ones. Send them again with the language that
+        # Sarvam found for the other sentences in the same script, or with the
+        # main language of the script.
+        detected: dict[str, Counter[str]] = {}
+        for language, result in zip(languages, results):
+            if language.code == "auto" and result.status == "translated":
+                if language.script and result.language:
+                    detected.setdefault(language.script, Counter())[
+                        result.language
+                    ] += 1
+        retry = [
+            index
+            for index, (language, result) in enumerate(zip(languages, results))
+            if language.code == "auto"
+            and result.status == "failed"
+            and is_detection_failure(result.detail)
+        ]
+        if retry:
+            second = [
+                _Language(
+                    None,
+                    code=_assumed_language(languages[i].script, detected),
+                    model="sarvam-translate:v1",
+                    script=languages[i].script,
+                )
+                for i in retry
+            ]
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                again = list(
+                    pool.map(self._translate, [unique[i] for i in retry], second)
+                )
+            for index, language, result in zip(retry, second, again):
+                if result.status == "translated":
+                    results[index] = Translation(
+                        text=result.text,
+                        status="translated",
+                        language=result.language,
+                        detail=(
+                            "Sarvam could not detect the language; translated as "
+                            f"{language.code}."
+                        ),
+                    )
+
         by_text = dict(zip(unique, results))
         return [by_text[sentence] for sentence in sentences]
 
-    def _translate(self, sentence: str, document_language: str | None) -> Translation:
-        language = sentence_language(sentence, document_language)
+    def _translate(self, sentence: str, language: _Language) -> Translation:
         if language.status is not None:
             copied = language.status in ("english", "no_letters")
             return Translation(

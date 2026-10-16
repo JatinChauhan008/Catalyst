@@ -2,6 +2,7 @@
 
 <target>/document_tables.md       every table, in reading order
 <target>/document_sentences.csv   original_sentence, english_translation
+<target>/document_sentence_problems.csv   every sentence without a (good) translation
 <target>/images/image_001.png     every image, in reading order
 <target>/extraction_report.json   counts, limits, errors, uncertain content
 """
@@ -17,23 +18,21 @@ from docling_core.types.doc import DoclingDocument, TableItem
 
 from catalyst.dost.images import extract_images
 from catalyst.dost.models import DostIssue, DostReport, DostSettings, SentenceCounts
+from catalyst.dost.problems import (
+    PROBLEMS_FILE,
+    find_problems,
+    summarize,
+    write_problems,
+)
 from catalyst.dost.sentences import CollectedText, collect_sentences
 from catalyst.dost.tables_md import tables_markdown
-from catalyst.dost.translate import (
-    SarvamTranslator,
-    Translation,
-    copy_or_skip,
-    numbers_differ,
-)
+from catalyst.dost.translate import SarvamTranslator, copy_or_skip
 from catalyst.models import TableRecord
 
 TABLES_FILE = "document_tables.md"
 SENTENCES_FILE = "document_sentences.csv"
 IMAGES_DIR = "images"
 REPORT_FILE = "extraction_report.json"
-
-# Row numbers listed in one issue message at most.
-_MAX_ROWS_LISTED = 15
 
 
 @dataclass
@@ -112,7 +111,7 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
 
     # 3. Sentences and translations.
     language = settings.source_language or source.ocr_language
-    collected = collect_sentences(document, source.tables)
+    collected = collect_sentences(document)
     originals = [sentence.text for sentence in collected.sentences]
     translator = None
     if settings.translate and source.sarvam_api_key:
@@ -142,13 +141,19 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
             for original, translation in zip(originals, translations)
         )
 
+    problems = find_problems(
+        originals, translations, [sentence.page for sentence in collected.sentences]
+    )
+    write_problems(problems, target / PROBLEMS_FILE)
     sentence_counts = SentenceCounts(
         sentences=len(originals),
         by_status=dict(Counter(t.status for t in translations)),
+        numbers_differ=sum(1 for p in problems if p.kind == "numbers_differ"),
         characters_sent=translator.characters_sent if translator else 0,
         skipped_items=collected.skipped,
     )
-    issues += _sentence_issues(originals, translations, sentence_counts, collected)
+    issues += summarize(problems)
+    issues += _sentence_issues(originals, collected)
 
     # Standing limits, so that a reader does not take the files as complete.
     issues += [
@@ -207,9 +212,11 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
         sentences=sentence_counts,
         images=images.counts,
         image_files=images.records,
+        sentence_problems=problems,
         files={
             "tables": TABLES_FILE,
             "sentences": SENTENCES_FILE,
+            "sentence_problems": PROBLEMS_FILE,
             "images": IMAGES_DIR,
             "report": REPORT_FILE,
         },
@@ -221,18 +228,7 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
     return report
 
 
-def _rows(numbers: list[int]) -> str:
-    listed = ", ".join(map(str, numbers[:_MAX_ROWS_LISTED]))
-    more = len(numbers) - _MAX_ROWS_LISTED
-    return listed + (f" and {more} more" if more > 0 else "")
-
-
-def _sentence_issues(
-    originals: list[str],
-    translations: list[Translation],
-    counts: SentenceCounts,
-    collected: CollectedText,
-) -> list[DostIssue]:
+def _sentence_issues(originals: list[str], collected: CollectedText) -> list[DostIssue]:
     issues: list[DostIssue] = []
     if not originals:
         issues.append(
@@ -240,51 +236,6 @@ def _sentence_issues(
                 severity="warn",
                 component="sentences",
                 message="No written text was found outside the tables.",
-            )
-        )
-    # CSV row numbers: the header is row 1.
-    by_status: dict[str, list[int]] = {}
-    details: dict[str, str] = {}
-    differ: list[int] = []
-    for row, (original, translation) in enumerate(
-        zip(originals, translations), start=2
-    ):
-        by_status.setdefault(translation.status, []).append(row)
-        if translation.detail:
-            details.setdefault(translation.status, translation.detail)
-        if translation.status == "translated" and numbers_differ(
-            original, translation.text
-        ):
-            differ.append(row)
-    counts.numbers_differ = len(differ)
-
-    for status, severity, what in (
-        ("failed", "error", "could not be translated"),
-        ("unsupported", "warn", "are in a language that Sarvam does not translate"),
-        ("disabled", "warn", "have no translation"),
-    ):
-        rows = by_status.get(status, [])
-        if rows:
-            detail = details.get(status)
-            issues.append(
-                DostIssue(
-                    severity=severity,
-                    component="translation",
-                    message=(
-                        f"{len(rows)} sentences {what}; their translation is empty "
-                        f"(CSV rows {_rows(rows)})." + (f" {detail}" if detail else "")
-                    ),
-                )
-            )
-    if differ:
-        issues.append(
-            DostIssue(
-                severity="warn",
-                component="translation",
-                message=(
-                    f"{len(differ)} translations do not contain all numbers of the "
-                    f"original sentence; check them (CSV rows {_rows(differ)})."
-                ),
             )
         )
     if collected.duplicates_removed:

@@ -126,6 +126,30 @@ class SentenceCounts(BaseModel):
     )
 
 
+SentenceProblemKind = Literal[
+    "not_translated",  # the translation service failed: the translation is empty
+    "language_not_supported",  # no service for this language: empty
+    "translation_off",  # translation off or no key: empty
+    "numbers_differ",  # translated, but numbers of the original are missing
+    "language_assumed",  # translated, but in a language that Catalyst assumed
+]
+
+
+class SentenceProblem(BaseModel):
+    """One sentence that has no translation, or whose translation needs a check."""
+
+    row: int = Field(description="Row in the sentences CSV (the header is row 1).")
+    page: int | None = None
+    original: str
+    translation: str
+    kind: SentenceProblemKind
+    reason: str = Field(description="What went wrong, in plain words.")
+    action: str | None = Field(default=None, description="What the user can do.")
+    detail: str | None = Field(
+        default=None, description="The technical message, for example the API error."
+    )
+
+
 class ImageRecord(BaseModel):
     """One file in `images/`."""
 
@@ -182,5 +206,9 @@ class DostReport(BaseModel):
     sentences: SentenceCounts = SentenceCounts()
     images: ImageCounts = ImageCounts()
     image_files: list[ImageRecord] = []
+    sentence_problems: list[SentenceProblem] = Field(
+        default=[],
+        description="Every sentence without a translation or with one to check, in CSV order.",
+    )
     files: dict[str, str] = {}
     issues: list[DostIssue] = []

@@ -766,6 +766,7 @@ class CatalystService:
         media = {
             "tables": ("dost_tables_md", "text/markdown"),
             "sentences": ("dost_sentences_csv", "text/csv"),
+            "sentence_problems": ("dost_problems_csv", "text/csv"),
             "report": ("dost_report_json", "application/json"),
         }
         for key, (kind, media_type) in media.items():

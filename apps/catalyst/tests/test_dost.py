@@ -100,7 +100,10 @@ def _document() -> DoclingDocument:
     document.add_heading("वार्षिक रिपोर्ट 2023")
     document.add_text(
         label=DocItemLabel.TEXT,
-        text="इस वर्ष 1,250 मिमी वर्षा हुई। The budget was approved. DROP 42 को देखें। FAIL यहाँ।",
+        text=(
+            "इस वर्ष 1,250 मिमी वर्षा हुई। The budget was approved. "
+            "DROP 42 को देखें। FAIL यहाँ। NODETECT जिले में।"
+        ),
     )
     cells = [
         TableCell(text=text, start_row_offset_idx=r, end_row_offset_idx=r + 1,
@@ -161,6 +164,7 @@ def test_dost_writes_tables_translations_and_reports_what_is_uncertain(
         "The budget was approved.",
         "DROP 42 को देखें।",
         "FAIL यहाँ।",
+        "NODETECT जिले में।",
     ]
     translations = dict(rows[1:])
     assert translations["इस वर्ष 1,250 मिमी वर्षा हुई।"].startswith("EN: ")
@@ -174,14 +178,38 @@ def test_dost_writes_tables_translations_and_reports_what_is_uncertain(
     )
     assert saved == report
     assert not report.complete
-    assert report.sentences.by_status == {"translated": 3, "english": 1, "failed": 1}
+    assert report.sentences.by_status == {"translated": 4, "english": 1, "failed": 1}
     assert report.sentences.numbers_differ == 1
     assert report.sentences.skipped_items == {"code": 1}
+
+    # Each sentence to check is listed with its row, a plain reason and an action.
+    # Sarvam could not detect the language of "NODETECT ...": it was sent again
+    # as hi-IN, the language Sarvam found for the other Devanagari sentences.
+    problems = {p.row: p for p in report.sentence_problems}
+    assert {row: p.kind for row, p in problems.items()} == {
+        5: "numbers_differ",
+        6: "not_translated",
+        7: "language_assumed",
+    }
+    assert "42" in problems[5].reason
+    assert problems[6].reason == "Sarvam refused this sentence: bad"
+    assert problems[6].translation == "" and "HTTP 400" in (problems[6].detail or "")
+    assert problems[7].translation.startswith("EN: ")
+    assert "translated as hi-IN" in problems[7].reason
+    assert all(p.action for p in problems.values())
+
+    # The same list as a CSV file for Excel, and a short summary per reason.
+    with (tmp_path / "document_sentence_problems.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as stream:
+        listed = list(csv.DictReader(stream))
+    assert [int(r["csv_row"]) for r in listed] == [5, 6, 7]
+    assert listed[1]["original_sentence"] == "FAIL यहाँ।"
     messages = [issue.message for issue in report.issues]
-    assert any("could not be translated" in m and "CSV rows 6" in m for m in messages)
     assert any(
-        "do not contain all numbers" in m and "CSV rows 5" in m for m in messages
+        m.startswith("1 sentence not translated: Sarvam refused") for m in messages
     )
+    assert not any("{" in m for m in messages)  # no raw API JSON in the summary
     assert (tmp_path / IMAGES_DIR).is_dir()
 
 

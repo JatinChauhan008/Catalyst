@@ -100,6 +100,20 @@ class FakeSarvam:
             text = body["input"]
             if "FAIL" in text:
                 return JSONResponse({"error": {"message": "bad"}}, status_code=400)
+            if "NODETECT" in text and body["source_language_code"] == "auto":
+                message = (
+                    "Unable to detect the language of the input text, please "
+                    "explicitly pass the `source_language_code` parameter."
+                )
+                return JSONResponse(
+                    {
+                        "error": {
+                            "message": message,
+                            "code": "unprocessable_entity_error",
+                        }
+                    },
+                    status_code=422,
+                )
             if "DROP" in text:
                 text = "".join(char for char in text if not char.isdigit())
             source = body["source_language_code"]
