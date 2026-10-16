@@ -100,10 +100,6 @@ export default function App() {
     <div className="shell single">
       <header className="topbar">
         <Logo />
-        <span className={`pill ${catalog.server.sarvam_configured ? "pill-on" : ""}`}>
-          <span className="pill-dot" />
-          {catalog.server.sarvam_configured ? "Sarvam OCR ready" : "Sarvam OCR not set up"}
-        </span>
       </header>
 
       <main className="content">
@@ -128,7 +124,6 @@ export default function App() {
 function Logo() {
   return (
     <div className="logo">
-      <span className="logo-mark">E</span>
       <span className="logo-name">Catalyst</span>
     </div>
   );
