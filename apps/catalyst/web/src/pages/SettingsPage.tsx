@@ -11,6 +11,11 @@ const GENERAL_SECTIONS: { key: keyof Catalog["general"] & keyof ConvertRequest; 
   { key: "tables", title: "Table extraction", help: "Files and metadata for every table." },
   { key: "pictures", title: "Image extraction", help: "Every picture as its own file." },
   { key: "pages", title: "HTML per page", help: "One HTML file per page." },
+  {
+    key: "dost",
+    title: "Tables, sentences and images",
+    help: "Tables as Markdown, sentences with English translations as CSV, images as files.",
+  },
   { key: "validation", title: "Validation", help: "Checks on the converted content and structure." },
   { key: "envelope", title: "Result envelope", help: "What the result keeps." },
 ];

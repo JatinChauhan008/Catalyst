@@ -83,6 +83,7 @@ export interface Catalog {
     tables: FieldSpec[];
     pictures: FieldSpec[];
     pages: FieldSpec[];
+    dost: FieldSpec[];
   };
   server: {
     docling_version: string;
@@ -109,7 +110,54 @@ export interface ConvertRequest {
   tables: Overrides;
   pages: Overrides;
   pictures: Overrides;
+  dost: Overrides;
   formats: Record<string, FormatConfig>;
+}
+
+export interface DostIssue {
+  severity: "info" | "warn" | "error";
+  component: string;
+  message: string;
+  page: number | null;
+}
+
+export interface DostImage {
+  filename: string;
+  page: number | null;
+  kind: "embedded" | "rendered";
+  format: string;
+  width_px: number;
+  height_px: number;
+  occurrences: number;
+  caption: string | null;
+}
+
+/** Tables as Markdown, sentences with English translations, images as files. */
+export interface DostReport {
+  complete: boolean;
+  pages: number;
+  scanned_pages: number[];
+  ocr_engine: string | null;
+  source_language: string | null;
+  tables: { tables: number; html_tables: number; joined_parts: number; with_warnings: number };
+  sentences: {
+    sentences: number;
+    by_status: Record<string, number>;
+    numbers_differ: number;
+    characters_sent: number;
+    skipped_items: Record<string, number>;
+  };
+  images: {
+    files: number;
+    embedded: number;
+    rendered: number;
+    duplicates_skipped: number;
+    too_small_skipped: number;
+    page_scans_skipped: number;
+    failed: number;
+  };
+  image_files: DostImage[];
+  issues: DostIssue[];
 }
 
 export interface ValidationCheck {
@@ -219,6 +267,7 @@ export interface Envelope {
   tables?: TableSummary[];
   pictures?: PictureSummary[];
   pages?: PageLink[];
+  dost?: DostReport | null;
   bundle_url: string | null;
   original_url: string | null;
   errors: { component: string | null; module: string | null; message: string }[];

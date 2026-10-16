@@ -17,6 +17,7 @@ const EMPTY_REQUEST: ConvertRequest = {
   tables: {},
   pages: {},
   pictures: {},
+  dost: {},
   formats: {},
 };
 

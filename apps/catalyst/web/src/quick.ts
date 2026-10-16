@@ -22,6 +22,8 @@ export interface Quick {
   extractTables: boolean;
   htmlPerPage: boolean;
   extractImages: boolean;
+  /** Tables as Markdown, sentences with English translations as CSV, images as files. */
+  dost: boolean;
   /** Set when PDFs use a pipeline that the simple settings do not cover. */
   pipelineNote: string | null;
 }
@@ -101,6 +103,7 @@ export function readQuick(request: ConvertRequest, catalog: Catalog): Quick {
     extractTables: request.tables?.enabled === true,
     htmlPerPage: request.pages?.enabled === true,
     extractImages: request.pictures?.enabled === true,
+    dost: request.dost?.enabled === true,
     pipelineNote:
       pipeline === "standard" ? null : `PDFs use the "${catalog.pipelines[pipeline].label}" pipeline (Advanced settings).`,
   };
@@ -127,7 +130,7 @@ export function writeQuick(request: ConvertRequest, catalog: Catalog, change: Pa
   let next = request;
   if (change.outputs) next = { ...next, export: { ...next.export, to_formats: change.outputs } };
   if (change.images) next = { ...next, export: { ...next.export, image_export_mode: change.images } };
-  const toggle = (key: "pages" | "pictures", on: boolean | undefined) => {
+  const toggle = (key: "pages" | "pictures" | "dost", on: boolean | undefined) => {
     if (on === undefined) return;
     const section = { ...(next[key] ?? {}) };
     if (on) section.enabled = true;
@@ -136,6 +139,7 @@ export function writeQuick(request: ConvertRequest, catalog: Catalog, change: Pa
   };
   toggle("pages", change.htmlPerPage);
   toggle("pictures", change.extractImages);
+  toggle("dost", change.dost);
   if (change.extractTables !== undefined) {
     const tables = { ...(next.tables ?? {}) };
     if (change.extractTables) tables.enabled = true;

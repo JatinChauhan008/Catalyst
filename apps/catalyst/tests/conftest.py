@@ -38,6 +38,7 @@ class FakeSarvam:
     )
     jobs: dict[str, dict] = field(default_factory=dict)
     submissions: list[dict] = field(default_factory=list)
+    translations: list[dict] = field(default_factory=list)
 
     def app(self) -> FastAPI:
         app = FastAPI()
@@ -81,6 +82,25 @@ class FakeSarvam:
                     "pages_failed": 0,
                 },
             }
+
+        @app.post("/translate")
+        async def translate(request: Request) -> JSONResponse:
+            # "EN: <input>"; an input with "FAIL" fails; "DROP" loses the numbers.
+            body = await request.json()
+            self.translations.append(body)
+            text = body["input"]
+            if "FAIL" in text:
+                return JSONResponse({"error": {"message": "bad"}}, status_code=400)
+            if "DROP" in text:
+                text = "".join(char for char in text if not char.isdigit())
+            source = body["source_language_code"]
+            return JSONResponse(
+                {
+                    "request_id": "t1",
+                    "translated_text": f"EN: {text}",
+                    "source_language_code": "hi-IN" if source == "auto" else source,
+                }
+            )
 
         @app.get("/doc-ai/v1/job/{job_id}/download-url")
         def download_url(job_id: str) -> dict:

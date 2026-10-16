@@ -10,6 +10,7 @@ from docling_core.types.doc import ImageRefMode
 from pydantic import BaseModel, Field
 
 from catalyst.catalog import FormatConfig
+from catalyst.dost.models import DostReport
 from docling.datamodel.base_models import InputFormat, OutputFormat
 
 ENVELOPE_SCHEMA_VERSION = "1.0"
@@ -279,6 +280,7 @@ class ConvertRequest(BaseModel):
     tables: dict[str, Any] = {}
     pages: dict[str, Any] = {}
     pictures: dict[str, Any] = {}
+    dost: dict[str, Any] = {}
     formats: dict[str, FormatConfig] = {}
 
 
@@ -485,6 +487,7 @@ class Envelope(BaseModel):
     tables: list[TableSummary] = []
     pictures: list[PictureSummary] = []
     pages: list[PageLink] = []
+    dost: DostReport | None = None
     bundle_url: str | None = None
     original_url: str | None = None
     errors: list[ErrorInfo] = []

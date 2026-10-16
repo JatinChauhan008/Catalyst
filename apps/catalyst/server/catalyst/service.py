@@ -24,6 +24,8 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from catalyst.catalog import AppDefaults, Catalog, FormatConfig
+from catalyst.dost.models import DostSettings
+from catalyst.dost.pipeline import DostInput, run_dost
 from catalyst.exporter import BINARY_FORMATS, MEDIA_TYPES, export_document
 from catalyst.furniture import move_repeated_furniture
 from catalyst.key_values import join_key_values
@@ -56,7 +58,11 @@ from catalyst.pages import write_page_html
 from catalyst.pictures import extract_pictures
 from catalyst.presets import register_presets
 from catalyst.sarvam import SarvamOcrOptions, register_sarvam_ocr
-from catalyst.sarvam.ocr_model import SARVAM_API_KEY_ENV, sarvam_script
+from catalyst.sarvam.ocr_model import (
+    SARVAM_API_KEY_ENV,
+    sarvam_language,
+    sarvam_script,
+)
 from catalyst.sarvam.tables import apply_sarvam_tables
 from catalyst.sarvam.usage import take_usage
 from catalyst.scripts import Script
@@ -143,6 +149,7 @@ class CatalystService:
                 f.model_dump() for f in describe_model(PictureExtractionSettings())
             ],
             "pages": [f.model_dump() for f in describe_model(PageHtmlSettings())],
+            "dost": [f.model_dump() for f in describe_model(DostSettings())],
         }
         description["server"] = {
             "docling_version": _docling_version(),
@@ -256,6 +263,7 @@ class CatalystService:
             table_settings = _apply(TableExtractionSettings(), request.tables)
             picture_settings = _apply(PictureExtractionSettings(), request.pictures)
             page_settings = _apply(PageHtmlSettings(), request.pages)
+            dost_settings = _apply(DostSettings(), request.dost)
         except OptionsError as exc:
             return reject(f"Invalid options: {exc}")
 
@@ -284,6 +292,7 @@ class CatalystService:
             (table_settings.enabled and table_settings.include_images)
             or picture_settings.enabled
             or page_settings.enabled
+            or dost_settings.enabled
         )
         try:
             converter, lock = self._converter(
@@ -440,6 +449,24 @@ class CatalystService:
                 page_settings,
             )
 
+        if dost_settings.enabled:
+            self._run_dost(
+                result,
+                envelope,
+                job_dir,
+                outputs_dir,
+                data,
+                converter,
+                dost_settings,
+                text_layer_ignored=settings.ignore_text_layer,
+                sarvam_tables=sarvam_tables,
+                garbled_script=(
+                    _ocr_script(converter)
+                    if settings.ignore_garbled_text_layer
+                    else None
+                ),
+            )
+
         if outputs_dir.exists():
             bundle = job_dir / "bundle.zip"
             with zipfile.ZipFile(
@@ -539,28 +566,13 @@ class CatalystService:
         sarvam_tables: set[str] | None = None,
         garbled_script: Script | None = None,
     ) -> None:
-        fmt = result.input.format
-        option = converter.format_to_options.get(fmt)
-        pipeline_options = option.pipeline_options if option else None
-        ocr = (
-            pipeline_options.ocr_options
-            if isinstance(pipeline_options, PdfPipelineOptions)
-            else None
-        )
-        context = ExtractionContext(
-            source=TableSource(
-                filename=envelope.source.filename,
-                sha256=envelope.source.sha256,
-                detected_format=fmt.value,
-                page_count=len(result.document.pages),
-            ),
-            is_pdf=fmt == InputFormat.PDF,
-            is_image=fmt == InputFormat.IMAGE,
+        context = _table_context(
+            result,
+            envelope,
+            data,
+            converter,
             text_layer_ignored=text_layer_ignored,
-            pdf_bytes=data if fmt == InputFormat.PDF else None,
-            ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
-            table_text=ocr.table_text if isinstance(ocr, SarvamOcrOptions) else None,
-            sarvam_tables=sarvam_tables or set(),
+            sarvam_tables=sarvam_tables,
             garbled_script=garbled_script,
         )
 
@@ -602,6 +614,89 @@ class CatalystService:
                     size_bytes=size,
                     url=url_for(path),
                     content=path.read_text(encoding="utf-8") if inline else None,
+                )
+            )
+
+    def _run_dost(
+        self,
+        result: Any,
+        envelope: Envelope,
+        job_dir: Path,
+        outputs_dir: Path,
+        data: bytes,
+        converter: DocumentConverter,
+        settings: DostSettings,
+        *,
+        text_layer_ignored: bool,
+        sarvam_tables: set[str],
+        garbled_script: Script | None,
+    ) -> None:
+        """Write the tables Markdown, the sentence CSV, the images and the report."""
+        fmt = result.input.format
+        ocr = _ocr_options(converter, fmt)
+        sarvam = ocr if isinstance(ocr, SarvamOcrOptions) else None
+        target = outputs_dir / "dost"
+        try:
+            context = _table_context(
+                result,
+                envelope,
+                data,
+                converter,
+                text_layer_ignored=text_layer_ignored,
+                sarvam_tables=sarvam_tables,
+                garbled_script=garbled_script,
+            )
+            # Parts of one table on several pages become one table.
+            records, items = extract_tables(
+                result.document, context, TableExtractionSettings(join_continued=True)
+            )
+            report = run_dost(
+                DostInput(
+                    document=result.document,
+                    source_name=envelope.source.filename,
+                    tables=records,
+                    table_items=items,
+                    pdf_bytes=data if fmt == InputFormat.PDF else None,
+                    ocr_engine=envelope.processing.ocr_engine
+                    if envelope.processing
+                    else None,
+                    ocr_language=sarvam_language(sarvam) if sarvam else None,
+                    sarvam_api_key=sarvam.resolved_api_key()
+                    if sarvam
+                    else os.environ.get(SARVAM_API_KEY_ENV),
+                    sarvam_base_url=sarvam.base_url
+                    if sarvam
+                    else "https://api.sarvam.ai",
+                    conversion_errors=tuple(
+                        f"{error.component}: {error.message}"
+                        for error in envelope.errors
+                    ),
+                    partial=result.status == ConversionStatus.PARTIAL_SUCCESS,
+                ),
+                settings,
+                target,
+            )
+        except Exception as exc:
+            _log.exception("DOST extraction failed")
+            envelope.errors.append(
+                ErrorInfo(component="dost", message=f"{type(exc).__name__}: {exc}")
+            )
+            return
+        envelope.dost = report
+        media = {
+            "tables": ("dost_tables_md", "text/markdown"),
+            "sentences": ("dost_sentences_csv", "text/csv"),
+            "report": ("dost_report_json", "application/json"),
+        }
+        for key, (kind, media_type) in media.items():
+            path = target / report.files[key]
+            envelope.outputs.append(
+                OutputItem(
+                    format=kind,
+                    filename=path.name,
+                    media_type=media_type,
+                    size_bytes=path.stat().st_size,
+                    url=self._file_url(envelope.job_id, path.relative_to(job_dir)),
                 )
             )
 
@@ -676,6 +771,51 @@ class CatalystService:
 
 def _apply(model: BaseModel, overrides: dict[str, Any]) -> Any:
     return apply_overrides(model, overrides) if overrides else model
+
+
+def _ocr_options(converter: DocumentConverter, fmt: InputFormat | None) -> Any:
+    """The OCR options of the pipeline for this format, when it runs OCR."""
+    option = converter.format_to_options.get(fmt) if fmt else None
+    pipeline_options = option.pipeline_options if option else None
+    if isinstance(pipeline_options, PdfPipelineOptions) and pipeline_options.do_ocr:
+        return pipeline_options.ocr_options
+    return None
+
+
+def _table_context(
+    result: Any,
+    envelope: Envelope,
+    data: bytes,
+    converter: DocumentConverter,
+    *,
+    text_layer_ignored: bool,
+    sarvam_tables: set[str] | None,
+    garbled_script: Script | None,
+) -> ExtractionContext:
+    fmt = result.input.format
+    option = converter.format_to_options.get(fmt)
+    pipeline_options = option.pipeline_options if option else None
+    ocr = (
+        pipeline_options.ocr_options
+        if isinstance(pipeline_options, PdfPipelineOptions)
+        else None
+    )
+    return ExtractionContext(
+        source=TableSource(
+            filename=envelope.source.filename,
+            sha256=envelope.source.sha256,
+            detected_format=fmt.value,
+            page_count=len(result.document.pages),
+        ),
+        is_pdf=fmt == InputFormat.PDF,
+        is_image=fmt == InputFormat.IMAGE,
+        text_layer_ignored=text_layer_ignored,
+        pdf_bytes=data if fmt == InputFormat.PDF else None,
+        ocr_engine=envelope.processing.ocr_engine if envelope.processing else None,
+        table_text=ocr.table_text if isinstance(ocr, SarvamOcrOptions) else None,
+        sarvam_tables=sarvam_tables or set(),
+        garbled_script=garbled_script,
+    )
 
 
 def _ocr_script(converter: DocumentConverter) -> Script | None:

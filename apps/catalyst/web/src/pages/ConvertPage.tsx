@@ -371,6 +371,13 @@ function SettingsCard({
           <Setting icon={<PagesIcon />} title="HTML per page" help="One HTML file per page with links between pages.">
             <Toggle checked={quick.htmlPerPage} onChange={(htmlPerPage) => set({ htmlPerPage })} />
           </Setting>
+          <Setting
+            icon={<SparkleIcon />}
+            title="Tables, sentences and images"
+            help="All tables in one Markdown file, every sentence with its English translation in a CSV file, every image as its own file, and a report of what is missing."
+          >
+            <Toggle checked={quick.dost} onChange={(dost) => set({ dost })} />
+          </Setting>
         </div>
       </div>
 

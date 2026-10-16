@@ -217,15 +217,21 @@ class SarvamOcrOptions(OcrOptions):
         return os.environ.get(SARVAM_API_KEY_ENV) or None
 
 
-def sarvam_script(options: SarvamOcrOptions) -> scripts.Script | None:
-    """The Unicode script of the document language, when Sarvam's language has one."""
+def sarvam_language(options: SarvamOcrOptions) -> str | None:
+    """The document language as a Sarvam code (`iso:hi` -> `hi-IN`), or None."""
     if not options.lang:
         return None
     code = options.lang[0]
     if code.startswith("iso:"):
         primary = code.removeprefix("iso:").split("-")[0].lower()
         code = _ISO_TO_SARVAM.get(primary, f"{primary}-IN")
-    return _SARVAM_SCRIPTS.get(code)
+    return code
+
+
+def sarvam_script(options: SarvamOcrOptions) -> scripts.Script | None:
+    """The Unicode script of the document language, when Sarvam's language has one."""
+    code = sarvam_language(options)
+    return _SARVAM_SCRIPTS.get(code) if code else None
 
 
 class SarvamOcrModel(BaseOcrModel):

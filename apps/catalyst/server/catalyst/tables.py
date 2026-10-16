@@ -44,6 +44,8 @@ from catalyst.scripts import Script, is_garbled
 # Text right above a table that names it ("STATEMENT SHOWING DISTRICT-WISE ...").
 _TITLE_MAX_CHARS = 200
 _SENTENCE_MIN_WORDS = 8
+# Full stop, question and exclamation marks, Devanagari dandas, CJK full stop.
+_SENTENCE_ENDS = (".", "?", "!", "।", "॥", "。")
 # A label such as "[Table-13]" that the layout model marked as a heading.
 _TABLE_LABEL = re.compile(r"^\[?\s*table\s*-?\s*\d+\s*\]?$", re.IGNORECASE)
 _TITLE_LOOKBACK = 4
@@ -240,7 +242,7 @@ def _title(
         text = item.text.strip()
         if (
             item.label == DocItemLabel.TEXT
-            and text.endswith(".")
+            and text.endswith(_SENTENCE_ENDS)
             and len(text.split()) >= _SENTENCE_MIN_WORDS
         ):
             return None  # a sentence of the body text, not a title

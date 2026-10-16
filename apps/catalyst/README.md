@@ -27,6 +27,7 @@ Upload ─► Validate size and type ─► Docling DocumentConverter ─► Doc
 | `server/catalyst/options_schema.py` | Describes Docling's option models for the UI, and rebuilds them from form input |
 | `server/catalyst/sarvam/` | Sarvam Vision as a Docling OCR engine |
 | `server/catalyst/validation.py` | Content and structure checks |
+| `server/catalyst/dost/` | Tables as Markdown, sentences with English translations as CSV, images as files, and the command line |
 | `web/` | React UI (Vite) |
 | `tests/` | Tests, with a fake Sarvam server |
 
@@ -187,6 +188,68 @@ each table:
   `outputs/pictures/<id>.png` (ID: file hash, page, number on the page), with
   `pictures.json` listing page, position, caption, section and pixel size.
   `min_size_px` skips small decorations.
+
+## Tables, sentences and images (DOST)
+
+Turn on **Tables, sentences and images** (main screen, or
+`"dost": {"enabled": true}` in the API options) to split a document into three
+outputs and a report. They are in the job folder under `outputs/dost/` and in
+the "Download all" ZIP:
+
+```text
+dost/
+├── document_tables.md       every table, in reading order
+├── document_sentences.csv   original_sentence, english_translation
+├── images/                  image_001.png, image_002.jpg, ... in reading order
+└── extraction_report.json   counts, limits, errors and uncertain content
+```
+
+The same works from the command line, without the server:
+
+```bash
+uv run --no-sync python apps/catalyst/server/catalyst/dost input.pdf -o output --lang hi-IN
+```
+
+Options: `--ocr sarvam|auto|off`, `--scanned` (OCR every page), `--pages 1-5`,
+`--no-translate`, `--include-page-scans`. The exit status is 0 when the report
+has no warnings or errors, 2 when it has some (the files are written), and 1
+when the document could not be converted.
+
+- **Tables**: one section per table with its page, title, caption, units and
+  footnotes. Parts of one table on several pages are joined. A table with one
+  header row and no merged cells is a Markdown pipe table; any other table is an
+  HTML table in the Markdown file, so merged cells and multi-row headers keep
+  their structure and no header is invented.
+- **Sentences**: headings, paragraphs, list items, captions and footnotes, in
+  reading order, one sentence per row (UTF-8, no BOM). Table cells, table
+  captions and table titles are only in the tables file. Code, formulas and
+  text inside a picture (chart labels) are left out and counted in the report.
+  Sentences end at `.`, `!`, `?`, the Devanagari dandas `।` `॥`, the Urdu full
+  stop and the CJK marks; abbreviations (`Dr.`, `Fig. 2`, `e.g.`) and initials
+  do not end a sentence.
+- **Translation**: with a Sarvam key, non-English sentences are translated with
+  the Sarvam Translate API (`mayura:v1` when the language must be detected,
+  else `sarvam-translate:v1`; numbers in 0–9). The language comes from the
+  script of the sentence and from `source_language` (or the Sarvam OCR
+  language). English sentences and numbers are copied. A sentence that fails,
+  or whose language Sarvam does not translate (for example French), keeps an
+  empty translation, and the report lists its CSV row. A translation that does
+  not contain every number of the original is also listed. Sarvam bills
+  translation by characters; the report gives `characters_sent`.
+- **Images**: the images stored in a PDF are written as they are stored (a JPEG
+  stays a JPEG, at its own resolution); other encodings become PNG. An image
+  that is drawn several times is written once (`occurrences`). A picture that
+  the layout model finds but that is not a stored image (a vector chart) is
+  rendered from the page at `render_dpi`. On a scanned page (one image covers
+  the page and there is no visible text) the scan is not saved; the pictures on
+  it are cut out instead (`include_page_scans` saves the scan too).
+
+`complete` in the report is true only when there are no warnings or errors.
+Limits that the report states as notes:
+
+- Vector drawings outside the pictures that the layout model found are not saved.
+- Transparency masks of stored images are not applied (pdfium cannot extract
+  them), so such an image can show a black or white background.
 
 ## PDFs with garbled text
 

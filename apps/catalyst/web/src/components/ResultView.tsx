@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { OUTPUT_LABELS } from "../quick";
 import type { Envelope, OutputItem, SarvamCost } from "../types";
+import { DostSection } from "./DostSection";
 import { PagesSection, PicturesSection } from "./PagesAndPictures";
 import { TablesSection } from "./TablesSection";
 
@@ -63,7 +64,7 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
   const preferred = ["html", "md", "text", "json"];
   // The table package has its own section.
   const documentOutputs = envelope.outputs.filter(
-    (output) => !/^(tables|pictures|pages)_/.test(output.format),
+    (output) => !/^(tables|pictures|pages|dost)_/.test(output.format),
   );
   const firstOutput =
     preferred.map((id) => documentOutputs.find((output) => output.format === id)).find(Boolean) ?? documentOutputs[0];
@@ -103,6 +104,8 @@ export function ResultView({ envelope }: { envelope: Envelope }) {
       )}
 
       {facts.length > 0 && <p className="facts">{facts.join(" · ")}</p>}
+
+      {envelope.dost && <DostSection report={envelope.dost} outputs={envelope.outputs} />}
 
       {envelope.pages && envelope.pages.length > 0 && <PagesSection pages={envelope.pages} outputs={envelope.outputs} />}
 
