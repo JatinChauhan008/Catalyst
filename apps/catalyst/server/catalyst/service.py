@@ -47,6 +47,7 @@ from catalyst.models import (
     TableExtractionSettings,
     TableSource,
     TableSummary,
+    TranslationCost,
     ValidationSettings,
 )
 from catalyst.options_schema import (
@@ -96,6 +97,8 @@ class ServerSettings(BaseSettings):
     web_dist: Path | None = None
     # Sarvam Document Digitization price (docs.sarvam.ai/api/pricing, 2026-10).
     sarvam_price_per_page: float = 0.5
+    # Sarvam Translate price, both models (docs.sarvam.ai/api/pricing, 2026-10).
+    sarvam_translate_price_per_10k_chars: float = 20.0
     sarvam_currency: str = "INR"
 
 
@@ -763,13 +766,25 @@ class CatalystService:
             )
             return
         envelope.dost = report
+        characters = report.sentences.characters_sent
+        if characters and envelope.processing is not None:
+            price = self.settings.sarvam_translate_price_per_10k_chars
+            envelope.processing.sarvam_translation = TranslationCost(
+                characters=characters,
+                price_per_10k_characters=price,
+                currency=self.settings.sarvam_currency,
+                cost=round(characters * price / 10_000, 4),
+            )
         media = {
             "tables": ("dost_tables_md", "text/markdown"),
             "sentences": ("dost_sentences_csv", "text/csv"),
             "sentence_problems": ("dost_problems_csv", "text/csv"),
+            "images_zip": ("dost_images_zip", "application/zip"),
             "report": ("dost_report_json", "application/json"),
         }
         for key, (kind, media_type) in media.items():
+            if key not in report.files:
+                continue  # for example no images, so no images ZIP
             path = target / report.files[key]
             envelope.outputs.append(
                 OutputItem(

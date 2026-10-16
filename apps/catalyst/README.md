@@ -2,8 +2,9 @@
 
 Catalyst is a document-processing service built on Docling. Docling is the
 conversion engine; Catalyst adds upload validation, routing, Sarvam OCR,
-content validation and a standardized output envelope. A web UI shows every
-Docling option.
+content validation and a standardized output envelope. A one-page web UI
+uploads documents, sets the common options and gives the output files as
+downloads.
 
 ```text
 Upload ─► Validate size and type ─► Docling DocumentConverter ─► DoclingDocument
@@ -138,11 +139,19 @@ stores the cost in the envelope under `processing.sarvam`:
 { "jobs": 1, "pages": 3, "price_per_page": 0.5, "currency": "INR", "cost": 1.5 }
 ```
 
-The **History** page shows this cost for each job and the total for the
-listed jobs. The price is the server price when the job ran
-(`CATALYST_SARVAM_PRICE_PER_PAGE`, ₹0.5 per page from the Sarvam price list
-of 2026-10). It is an estimate: check your Sarvam dashboard for the billed
-amount. A Sarvam job that fails is not counted.
+Sarvam bills translation per character sent, for both models. The DOST
+translation cost is in `processing.sarvam_translation`:
+
+```json
+{ "characters": 5200, "price_per_10k_characters": 20.0, "currency": "INR", "cost": 10.4 }
+```
+
+The result shows the OCR cost, the translation cost and their total. The prices
+are the server prices when the job ran (`CATALYST_SARVAM_PRICE_PER_PAGE`, ₹0.5
+per page, and `CATALYST_SARVAM_TRANSLATE_PRICE_PER_10K_CHARS`, ₹20 per 10,000
+characters, from the Sarvam price list of 2026-10). They are estimates: check
+your Sarvam dashboard for the billed amount. A Sarvam job that fails is not
+counted.
 
 ## Table extraction
 
@@ -191,10 +200,10 @@ each table:
 
 ## Tables, sentences and images (DOST)
 
-Turn on **Tables, sentences and images** (main screen, or
+Select the **DOST** output format (selected by default in the web UI, or
 `"dost": {"enabled": true}` in the API options) to split a document into three
 outputs and a report. They are in the job folder under `outputs/dost/` and in
-the "Download all" ZIP:
+the "Download all" ZIP; `document_images.zip` holds all images in one file:
 
 ```text
 dost/
@@ -303,25 +312,19 @@ Requests" all translation workers wait (up to about four minutes), following
 
 ## Options
 
-The main screen has three steps: add documents, choose settings, see results.
-The settings there are the common ones: output formats, OCR engine (Sarvam,
-built-in, off), document language, "scanned document" (full-page OCR), table
-detection and images. They apply to PDF and image files.
+The web UI is one page: add documents, choose the settings, convert. The
+settings are the common ones: output formats (DOST, Markdown, HTML, JSON, plain
+text and more), OCR engine (Sarvam, built-in, off), document language, "scanned
+document" (full-page OCR), table detection and images. They apply to PDF and
+image files.
 
-**Advanced settings** (top right) opens every other option. It has no
-hard-coded Docling options: `/api/catalog` describes the option models of every
-pipeline and backend, so new Docling options appear automatically. The simple
-settings and the advanced settings edit the same state.
+A result shows the download links first (each file, all images as one ZIP, and
+everything as one ZIP), then a summary with the Sarvam cost, then the sentences
+to check. The browser does not show the documents themselves.
 
-- **Limits, outputs and checks**: allowed formats, size and page limits, page
-  range, output formats, image mode, chunking, validation rules, envelope content.
-- **Per file type**: for each of the 36 input formats, the pipeline
-  (standard, VLM, native, legacy, ASR, video, simple), all its options
-  (OCR engine and its settings, layout model, table model, picture
-  description, enrichment, accelerator, ...), the backend and all its options.
-  Model presets (VLM, picture description, ASR, ...) appear as a "Preset"
-  choice.
-- **Settings as JSON**: your changes as JSON, to save or reuse in API calls.
+Every other Docling option is still available through the API: `/api/catalog`
+describes the option models of every pipeline and backend, and a request can
+override any of them (see `formats` below).
 
 Options that point at server files or remote services (`artifacts_path`,
 `enable_local_fetch`, `enable_remote_services`, ...) apply on the server.
@@ -363,7 +366,8 @@ Job files stay in `apps/catalyst/.data/jobs` (the newest 200 jobs).
 | `CATALYST_KEEP_JOBS` | 200 | Jobs to keep |
 | `CATALYST_CONVERTER_CACHE_SIZE` | 4 | Option sets that keep their loaded models |
 | `CATALYST_CORS_ORIGINS` | localhost:5173 | Allowed browser origins (JSON list) |
-| `CATALYST_SARVAM_PRICE_PER_PAGE` | 0.5 | Sarvam price per page, for the cost in the envelope and the history |
+| `CATALYST_SARVAM_PRICE_PER_PAGE` | 0.5 | Sarvam OCR price per page, for the cost in the envelope |
+| `CATALYST_SARVAM_TRANSLATE_PRICE_PER_10K_CHARS` | 20 | Sarvam Translate price per 10,000 characters |
 | `CATALYST_SARVAM_CURRENCY` | INR | Currency of that price (ISO 4217 code) |
 
 ## Tests

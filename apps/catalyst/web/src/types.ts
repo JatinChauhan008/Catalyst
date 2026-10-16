@@ -262,6 +262,14 @@ export interface SarvamCost {
   cost: number;
 }
 
+/** Sarvam bills translation per character sent. */
+export interface TranslationCost {
+  characters: number;
+  price_per_10k_characters: number;
+  currency: string;
+  cost: number;
+}
+
 export interface Envelope {
   schema_version: string;
   job_id: string;
@@ -273,6 +281,7 @@ export interface Envelope {
     backend: string | null;
     ocr_engine: string | null;
     sarvam?: SarvamCost | null;
+    sarvam_translation?: TranslationCost | null;
     ocr_language_from_font?: string | null;
     docling_version: string;
     duration_seconds: number;

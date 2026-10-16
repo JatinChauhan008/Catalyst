@@ -306,6 +306,19 @@ class SarvamCost(BaseModel):
     cost: float
 
 
+class TranslationCost(BaseModel):
+    """What the Sarvam translation of one conversion costs.
+
+    Sarvam bills translation per character sent (both models at the same
+    rate). The price is the server's price when the job ran.
+    """
+
+    characters: int
+    price_per_10k_characters: float
+    currency: str
+    cost: float
+
+
 class ProcessingInfo(BaseModel):
     pipeline: str | None = None
     backend: str | None = None
@@ -317,6 +330,7 @@ class ProcessingInfo(BaseModel):
         description="Tables that take their rows, columns and merged cells from Sarvam.",
     )
     sarvam: SarvamCost | None = None
+    sarvam_translation: TranslationCost | None = None
     ocr_language_from_font: str | None = Field(
         default=None,
         description=(

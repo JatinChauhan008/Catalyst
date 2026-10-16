@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { convertFile, fetchCatalog } from "./api";
-import { countChanges } from "./components/FieldForm";
-import { CodeIcon, FileIcon, GearIcon, HistoryIcon, SparkleIcon } from "./components/Icons";
-import { ApiPage } from "./pages/ApiPage";
 import { ConvertPage, type QueueItem } from "./pages/ConvertPage";
-import { HistoryPage } from "./pages/HistoryPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import type { Catalog, ConvertRequest } from "./types";
 
-const STORAGE_KEY = "catalyst.request.v1";
+const STORAGE_KEY = "catalyst.request.v2";
+// DOST (tables, sentences with English, images) is one of the output formats,
+// selected by default.
 const EMPTY_REQUEST: ConvertRequest = {
   settings: {},
   export: {},
@@ -17,17 +14,9 @@ const EMPTY_REQUEST: ConvertRequest = {
   tables: {},
   pages: {},
   pictures: {},
-  dost: {},
+  dost: { enabled: true },
   formats: {},
 };
-
-type Page = "convert" | "history" | "api" | "settings";
-const PAGES: Page[] = ["convert", "history", "api", "settings"];
-
-function pageFromHash(): Page {
-  const hash = window.location.hash.replace("#", "") as Page;
-  return PAGES.includes(hash) ? hash : "convert";
-}
 
 function loadRequest(): ConvertRequest {
   try {
@@ -53,20 +42,10 @@ export default function App() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [openResult, setOpenResult] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [page, setPage] = useState<Page>(pageFromHash);
 
   useEffect(() => {
     fetchCatalog().then(setCatalog, (error) => setLoadError(String(error)));
-    const onHash = () => setPage(pageFromHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
   }, []);
-
-  const go = (next: Page) => {
-    window.location.hash = next;
-    setPage(next);
-    window.scrollTo(0, 0);
-  };
 
   const updateRequest = useCallback((next: ConvertRequest) => {
     setRequest(next);
@@ -90,15 +69,6 @@ export default function App() {
       </div>
     );
   }
-
-  const changes =
-    countChanges(request.settings) +
-    countChanges(request.validation) +
-    countChanges(request.envelope) +
-    countChanges(request.tables ?? {}) +
-    countChanges(request.pages ?? {}) +
-    countChanges(request.pictures ?? {}) +
-    Object.keys(request.formats).length;
 
   const addFiles = (files: FileList | null) => {
     if (!files) return;
@@ -126,69 +96,30 @@ export default function App() {
     setRunning(false);
   };
 
-  const reset = () => updateRequest(EMPTY_REQUEST);
-
   return (
-    <div className="shell">
+    <div className="shell single">
       <header className="topbar">
         <Logo />
         <span className={`pill ${catalog.server.sarvam_configured ? "pill-on" : ""}`}>
           <span className="pill-dot" />
           {catalog.server.sarvam_configured ? "Sarvam OCR ready" : "Sarvam OCR not set up"}
         </span>
-        <div className="topbar-actions">
-          <button type="button" className="icon-round" aria-label="Settings" onClick={() => go("settings")}>
-            <GearIcon />
-          </button>
-          <button type="button" className="btn pill-btn" onClick={() => go("settings")}>
-            Advanced settings
-            {changes > 0 && <span className="count">{changes}</span>}
-          </button>
-        </div>
       </header>
 
-      <nav className="sidebar" aria-label="Main">
-        <NavItem active={page === "convert"} icon={<FileIcon size={22} />} title="Convert" help="Document to text/HTML" onClick={() => go("convert")} />
-        <NavItem active={page === "history"} icon={<HistoryIcon size={22} />} title="History" help="Past conversions" onClick={() => go("history")} />
-        <NavItem active={page === "api"} icon={<CodeIcon size={22} />} title="API" help="Integrate with Catalyst" onClick={() => go("api")} />
-        <NavItem active={page === "settings"} icon={<GearIcon size={22} />} title="Settings" help="Preferences" onClick={() => go("settings")} />
-        <div className="sidebar-card">
-          <span className="sidebar-card-icon">
-            <SparkleIcon size={22} />
-          </span>
-          {catalog.server.sarvam_configured ? (
-            <>
-              <strong>Powered by Sarvam OCR</strong>
-              <span className="muted small">Accurate text extraction for Indian documents</span>
-            </>
-          ) : (
-            <>
-              <strong>Powered by Docling</strong>
-              <span className="muted small">Add a Sarvam key for Indian-language OCR</span>
-            </>
-          )}
-        </div>
-      </nav>
-
       <main className="content">
-        {page === "convert" && (
-          <ConvertPage
-            catalog={catalog}
-            request={request}
-            onRequestChange={updateRequest}
-            onReset={reset}
-            queue={queue}
-            onAddFiles={addFiles}
-            onRemove={(id) => setQueue((current) => current.filter((q) => q.id !== id))}
-            onRun={run}
-            running={running}
-            openResult={openResult}
-            onOpenResult={setOpenResult}
-          />
-        )}
-        {page === "history" && <HistoryPage />}
-        {page === "api" && <ApiPage request={request} onChange={updateRequest} emptyRequest={EMPTY_REQUEST} />}
-        {page === "settings" && <SettingsPage catalog={catalog} request={request} onChange={updateRequest} onReset={reset} />}
+        <ConvertPage
+          catalog={catalog}
+          request={request}
+          onRequestChange={updateRequest}
+          onReset={() => updateRequest(EMPTY_REQUEST)}
+          queue={queue}
+          onAddFiles={addFiles}
+          onRemove={(id) => setQueue((current) => current.filter((q) => q.id !== id))}
+          onRun={run}
+          running={running}
+          openResult={openResult}
+          onOpenResult={setOpenResult}
+        />
       </main>
     </div>
   );
@@ -200,29 +131,5 @@ function Logo() {
       <span className="logo-mark">E</span>
       <span className="logo-name">Catalyst</span>
     </div>
-  );
-}
-
-function NavItem({
-  active,
-  icon,
-  title,
-  help,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  title: string;
-  help: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} onClick={onClick}>
-      <span className="nav-icon">{icon}</span>
-      <span className="nav-text">
-        <strong>{title}</strong>
-        <span className="small">{help}</span>
-      </span>
-    </button>
   );
 }

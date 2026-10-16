@@ -1,9 +1,6 @@
-import { useEffect, useState } from "react";
+import type { Envelope, OutputItem } from "../types";
 import { OUTPUT_LABELS } from "../quick";
-import type { Envelope, OutputItem, SarvamCost } from "../types";
-import { DostSection } from "./DostSection";
-import { PagesSection, PicturesSection } from "./PagesAndPictures";
-import { TablesSection } from "./TablesSection";
+import { DostStats, ProblemTable } from "./DostSection";
 
 export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -19,10 +16,6 @@ export function formatMoney(amount: number, currency: string): string {
   }
 }
 
-export function sarvamCostText(cost: SarvamCost): string {
-  return `${formatMoney(cost.cost, cost.currency)} (${cost.pages} page${cost.pages === 1 ? "" : "s"})`;
-}
-
 const STATUS_TEXT: Record<Envelope["status"], { title: string; tone: string }> = {
   success: { title: "Converted", tone: "success" },
   partial_success: { title: "Converted with problems", tone: "warn" },
@@ -33,165 +26,142 @@ const STATUS_TEXT: Record<Envelope["status"], { title: string; tone: string }> =
 export function statusOf(envelope: Envelope): { title: string; tone: string } {
   const base = STATUS_TEXT[envelope.status];
   const warnings = envelope.validation?.checks.some((check) => check.status !== "pass");
-  if (envelope.status === "success" && warnings) return { title: "Converted with warnings", tone: "warn" };
+  if (envelope.status === "success" && (warnings || (envelope.dost && !envelope.dost.complete))) {
+    return { title: "Converted, needs review", tone: "warn" };
+  }
   return base;
 }
 
-function OutputPreview({ output }: { output: OutputItem }) {
-  if (output.content === null) {
-    return (
-      <div className="notice">
-        This file is too large to show here ({formatBytes(output.size_bytes)}). Use the download button.
-      </div>
-    );
-  }
-  if (output.media_type === "text/html") {
-    // An empty sandbox: the preview cannot run scripts.
-    return <iframe className="preview-frame" sandbox="" srcDoc={output.content} title={output.filename} />;
-  }
-  let text = output.content;
-  if (output.media_type === "application/json") {
-    try {
-      text = JSON.stringify(JSON.parse(text), null, 2);
-    } catch {
-      // keep the raw text
-    }
-  }
-  return <pre className="preview-text">{text}</pre>;
+// Download labels, in the order they are listed.
+const DOWNLOADS: [string, string][] = [
+  ["dost_tables_md", "Tables (Markdown)"],
+  ["dost_sentences_csv", "Sentences with English translation (CSV)"],
+  ["dost_problems_csv", "Sentences to check (CSV)"],
+  ["dost_images_zip", "All images (ZIP)"],
+  ["dost_report_json", "Extraction report (JSON)"],
+  ["tables_xlsx", "Table package (Excel)"],
+  ["tables_json", "Table package (JSON)"],
+  ["pictures_json", "Picture list (JSON)"],
+  ["pages_html", "HTML per page (index)"],
+];
+
+function downloadLabel(output: OutputItem): string {
+  const known = DOWNLOADS.find(([format]) => format === output.format);
+  if (known) return known[1];
+  return `Document (${OUTPUT_LABELS[output.format] ?? output.format})`;
 }
 
-export function ResultView({ envelope }: { envelope: Envelope }) {
-  const preferred = ["html", "md", "text", "json"];
-  // The table package has its own section.
-  const documentOutputs = envelope.outputs.filter(
-    (output) => !/^(tables|pictures|pages|dost)_/.test(output.format),
+function Downloads({ envelope }: { envelope: Envelope }) {
+  const order = (output: OutputItem) => {
+    const index = DOWNLOADS.findIndex(([format]) => format === output.format);
+    return index === -1 ? DOWNLOADS.length : index;
+  };
+  const outputs = [...envelope.outputs].sort((a, b) => order(a) - order(b));
+  const images = envelope.dost?.images.files ?? 0;
+  if (outputs.length === 0) return null;
+  return (
+    <section className="downloads">
+      <h4>Downloads</h4>
+      <ul>
+        {outputs.map((output) => (
+          <li key={output.format}>
+            <span className="download-name">
+              <strong>{downloadLabel(output)}</strong>
+              <span className="muted small">
+                {output.filename} · {formatBytes(output.size_bytes)}
+                {output.format === "dost_images_zip" ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}
+              </span>
+            </span>
+            <a className="btn" href={output.url} download={output.filename}>
+              Download
+            </a>
+          </li>
+        ))}
+        {envelope.bundle_url && outputs.length > 1 && (
+          <li className="download-all">
+            <span className="download-name">
+              <strong>Everything (ZIP)</strong>
+              <span className="muted small">All the files above in one archive</span>
+            </span>
+            <a className="btn primary" href={envelope.bundle_url}>
+              Download all
+            </a>
+          </li>
+        )}
+      </ul>
+    </section>
   );
-  const firstOutput =
-    preferred.map((id) => documentOutputs.find((output) => output.format === id)).find(Boolean) ?? documentOutputs[0];
-  const [active, setActive] = useState(firstOutput?.format ?? "");
-  const [copied, setCopied] = useState(false);
-  useEffect(() => setActive(firstOutput?.format ?? ""), [envelope.job_id, firstOutput?.format]);
+}
 
-  const output = documentOutputs.find((item) => item.format === active);
-  const problems = envelope.validation?.checks.filter((check) => check.status !== "pass") ?? [];
+function Summary({ envelope }: { envelope: Envelope }) {
   const { stats, processing } = envelope;
-
+  const ocr = processing?.sarvam;
+  const translation = processing?.sarvam_translation;
+  const currency = ocr?.currency ?? translation?.currency;
   const facts = [
     envelope.source.detected_format?.toUpperCase(),
-    stats && stats.pages > 0 ? `${stats.pages} page${stats.pages === 1 ? "" : "s"}` : null,
-    stats && stats.tables > 0 ? `${stats.tables} table${stats.tables === 1 ? "" : "s"}` : null,
-    stats && stats.pictures > 0 ? `${stats.pictures} picture${stats.pictures === 1 ? "" : "s"}` : null,
+    !envelope.dost && stats && stats.pages > 0 ? `${stats.pages} page${stats.pages === 1 ? "" : "s"}` : null,
     processing?.ocr_engine ? `OCR: ${processing.ocr_engine}` : null,
-    processing?.ocr_language_from_font ? `Language: ${processing.ocr_language_from_font}` : null,
-    processing?.sarvam ? `Sarvam cost: ${sarvamCostText(processing.sarvam)}` : null,
+    processing?.ocr_language_from_font
+      ? `Language: ${processing.ocr_language_from_font}`
+      : envelope.dost?.source_language
+        ? `Language: ${envelope.dost.source_language}`
+        : null,
     processing ? `${processing.duration_seconds.toFixed(1)} s` : null,
   ].filter(Boolean);
 
   return (
+    <section className="summary">
+      <h4>Summary</h4>
+      {envelope.dost && <DostStats report={envelope.dost} />}
+      {facts.length > 0 && <p className="facts">{facts.join(" · ")}</p>}
+      {currency && (
+        <p className="cost">
+          <strong>Sarvam cost:</strong>{" "}
+          {[
+            ocr ? `OCR ${formatMoney(ocr.cost, ocr.currency)} (${ocr.pages} page${ocr.pages === 1 ? "" : "s"})` : null,
+            translation
+              ? `translation ${formatMoney(translation.cost, translation.currency)} (${translation.characters.toLocaleString()} characters)`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" + ")}
+          {" = "}
+          <strong>{formatMoney((ocr?.cost ?? 0) + (translation?.cost ?? 0), currency)}</strong>
+          <span className="muted small"> (estimate; check the Sarvam dashboard for the billed amount)</span>
+        </p>
+      )}
+    </section>
+  );
+}
+
+export function ResultView({ envelope }: { envelope: Envelope }) {
+  const warnings = envelope.validation?.checks.filter((check) => check.status !== "pass") ?? [];
+  const problems = envelope.dost?.sentence_problems ?? [];
+
+  return (
     <div className="result-body">
-      {(problems.length > 0 || envelope.errors.length > 0) && (
+      {(warnings.length > 0 || envelope.errors.length > 0) && (
         <div className="problems">
-          {problems.map((check) => (
+          {envelope.errors.map((error, index) => (
+            <div key={`e${index}`} className="notice notice-danger">
+              {error.message}
+            </div>
+          ))}
+          {warnings.map((check) => (
             <div key={check.id} className={`notice notice-${check.status === "fail" ? "danger" : "warn"}`}>
               {check.message}
             </div>
           ))}
-          {envelope.errors.map((error, index) => (
-            <div key={index} className="notice notice-danger">
-              {error.message}
-            </div>
-          ))}
         </div>
       )}
 
-      {facts.length > 0 && <p className="facts">{facts.join(" · ")}</p>}
-
-      {envelope.dost && <DostSection report={envelope.dost} outputs={envelope.outputs} />}
-
-      {envelope.pages && envelope.pages.length > 0 && <PagesSection pages={envelope.pages} outputs={envelope.outputs} />}
-
-      {envelope.pictures && envelope.pictures.length > 0 && (
-        <PicturesSection pictures={envelope.pictures} outputs={envelope.outputs} />
+      <Downloads envelope={envelope} />
+      <Summary envelope={envelope} />
+      {problems.length > 0 && <ProblemTable problems={problems} />}
+      {envelope.dost && problems.length === 0 && (
+        <p className="muted">Every sentence has an English translation; no sentence needs a check.</p>
       )}
-
-      {envelope.tables && envelope.tables.length > 0 && (
-        <TablesSection tables={envelope.tables} outputs={envelope.outputs} />
-      )}
-
-      {documentOutputs.length > 0 && (
-        <div className="viewer">
-          <div className="viewer-bar">
-            <div className="segmented">
-              {documentOutputs.map((item) => (
-                <button
-                  key={item.format}
-                  type="button"
-                  className={item.format === active ? "on" : ""}
-                  onClick={() => setActive(item.format)}
-                >
-                  {OUTPUT_LABELS[item.format] ?? item.format}
-                </button>
-              ))}
-            </div>
-            <div className="viewer-actions">
-              {output?.content && (
-                <button
-                  type="button"
-                  className="btn ghost"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(output.content ?? "");
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  }}
-                >
-                  {copied ? "Copied" : "Copy"}
-                </button>
-              )}
-              {output && (
-                <a className="btn" href={output.url} download={output.filename}>
-                  Download
-                </a>
-              )}
-              {envelope.bundle_url && documentOutputs.length > 1 && (
-                <a className="btn" href={envelope.bundle_url}>
-                  Download all
-                </a>
-              )}
-            </div>
-          </div>
-          {output && <OutputPreview output={output} />}
-        </div>
-      )}
-
-      <details className="tech">
-        <summary>Technical details</summary>
-        <dl>
-          <dt>Pipeline</dt>
-          <dd>{processing?.pipeline ?? "-"}</dd>
-          <dt>Parser</dt>
-          <dd>{processing?.backend ?? "-"}</dd>
-          <dt>Characters</dt>
-          <dd>{stats?.characters.toLocaleString() ?? "-"}</dd>
-          <dt>Headings</dt>
-          <dd>{stats?.headings ?? "-"}</dd>
-          <dt>Checks</dt>
-          <dd>{envelope.validation?.checks.map((check) => `${check.id}: ${check.status}`).join(", ") ?? "-"}</dd>
-          <dt>Job</dt>
-          <dd>
-            <code>{envelope.job_id}</code>
-          </dd>
-          <dt>Docling</dt>
-          <dd>{processing?.docling_version ?? "-"}</dd>
-        </dl>
-        {envelope.original_url && (
-          <p>
-            <a href={envelope.original_url}>Original file</a>
-          </p>
-        )}
-        <pre className="preview-text small">
-          {JSON.stringify(envelope, (key, value) => (key === "content" ? undefined : value), 2)}
-        </pre>
-      </details>
     </div>
   );
 }

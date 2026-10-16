@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -364,4 +365,16 @@ def test_a_pdf_gives_one_markdown_file_a_csv_and_ordered_unique_images(
         f.filename for f in files
     ]
     kinds = {o.format for o in envelope.outputs}
-    assert {"dost_tables_md", "dost_sentences_csv", "dost_report_json"} <= kinds
+    assert {
+        "dost_tables_md",
+        "dost_sentences_csv",
+        "dost_problems_csv",
+        "dost_images_zip",
+        "dost_report_json",
+    } <= kinds
+    # One ZIP holds every image, in reading order.
+    with zipfile.ZipFile(target / "document_images.zip") as archive:
+        assert archive.namelist() == [f"images/{f.filename}" for f in files]
+    # No translation ran, so there is no translation cost.
+    assert envelope.processing is not None
+    assert envelope.processing.sarvam_translation is None

@@ -24,7 +24,13 @@ if __package__ in (None, ""):
     # Run as a script path: make the `catalyst` package importable.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from catalyst.dost.pipeline import IMAGES_DIR, REPORT_FILE, SENTENCES_FILE, TABLES_FILE
+from catalyst.dost.pipeline import (
+    IMAGES_DIR,
+    IMAGES_ZIP,
+    REPORT_FILE,
+    SENTENCES_FILE,
+    TABLES_FILE,
+)
 from catalyst.dost.problems import PROBLEMS_FILE
 from catalyst.models import ConvertRequest
 from catalyst.options_schema import VARIANT_KEY
@@ -152,7 +158,13 @@ def main(argv: list[str] | None = None) -> int:
         args.output.mkdir(parents=True, exist_ok=True)
         # Replace the outputs of an earlier run, so that no old image stays.
         shutil.rmtree(args.output / IMAGES_DIR, ignore_errors=True)
-        for name in (TABLES_FILE, SENTENCES_FILE, PROBLEMS_FILE, REPORT_FILE):
+        for name in (
+            TABLES_FILE,
+            SENTENCES_FILE,
+            PROBLEMS_FILE,
+            IMAGES_ZIP,
+            REPORT_FILE,
+        ):
             (args.output / name).unlink(missing_ok=True)
         shutil.copytree(source, args.output, dirs_exist_ok=True)
 
@@ -178,6 +190,21 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Images: {report.images.files} ({report.images.embedded} embedded, {report.images.rendered} rendered) -> {IMAGES_DIR}/"
     )
+    processing = envelope.processing
+    costs = []
+    if processing and processing.sarvam:
+        costs.append(
+            f"OCR {processing.sarvam.cost:g} ({processing.sarvam.pages} pages)"
+        )
+    if processing and processing.sarvam_translation:
+        t = processing.sarvam_translation
+        costs.append(f"translation {t.cost:g} ({t.characters} characters)")
+    if costs:
+        currency = (processing.sarvam or processing.sarvam_translation).currency
+        total = (processing.sarvam.cost if processing.sarvam else 0) + (
+            processing.sarvam_translation.cost if processing.sarvam_translation else 0
+        )
+        print(f"Sarvam cost: {', '.join(costs)}; total {total:g} {currency} (estimate)")
     for issue in report.issues:
         if issue.severity != "info":
             page = f" (page {issue.page})" if issue.page else ""

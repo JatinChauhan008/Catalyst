@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import csv
+import zipfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,7 @@ from catalyst.models import TableRecord
 TABLES_FILE = "document_tables.md"
 SENTENCES_FILE = "document_sentences.csv"
 IMAGES_DIR = "images"
+IMAGES_ZIP = "document_images.zip"
 REPORT_FILE = "extraction_report.json"
 
 
@@ -91,6 +93,14 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
     # 2. Images (first: it also finds the scanned pages).
     images = extract_images(document, source.pdf_bytes, settings, target / IMAGES_DIR)
     issues += images.issues
+    if images.records:
+        # One download for all images, in their reading order.
+        with zipfile.ZipFile(target / IMAGES_ZIP, "w") as archive:
+            for record in images.records:
+                archive.write(
+                    target / IMAGES_DIR / record.filename,
+                    f"{IMAGES_DIR}/{record.filename}",
+                )
     if images.scanned_pages:
         pages = ", ".join(map(str, images.scanned_pages))
         if source.ocr_engine:
@@ -223,6 +233,7 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
             "sentences": SENTENCES_FILE,
             "sentence_problems": PROBLEMS_FILE,
             "images": IMAGES_DIR,
+            **({"images_zip": IMAGES_ZIP} if images.records else {}),
             "report": REPORT_FILE,
         },
         issues=issues,

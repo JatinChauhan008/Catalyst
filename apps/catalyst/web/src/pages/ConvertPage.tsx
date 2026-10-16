@@ -1,13 +1,11 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Segmented, Toggle } from "../components/Controls";
-import { HeroArt } from "../components/HeroArt";
 import {
   ArrowRightIcon,
   BracesIcon,
   CheckIcon,
   CubeIcon,
   FileIcon,
-  FormatBadge,
   GlobeIcon,
   ImageIcon,
   MarkdownIcon,
@@ -53,64 +51,53 @@ export function ConvertPage(props: Props) {
   const pending = queue.filter((item) => item.state === "queued" || item.state === "error");
   const finished = queue.filter((item) => item.state !== "queued");
 
+  const quick = readQuick(props.request, catalog);
+  const nothingSelected = quick.outputs.length === 0 && !quick.dost;
+
   return (
-    <div className="convert-layout">
-      <div className="convert-main">
-        <section className="hero">
-          <div className="hero-text">
-            <p className="eyebrow">Turn documents into clean, structured text</p>
-            <h1>
-              Upload, extract, and convert your <em>documents.</em>
-            </h1>
-            <p className="hero-sub">
-              Convert PDFs, images, Word files and more to clean, structured text or HTML.
-              {catalog.server.sarvam_configured ? " Powered by Sarvam OCR for Indian documents." : ""}
-            </p>
-          </div>
-          <HeroArt />
-        </section>
+    <div className="convert-main">
+      <UploadCard maxMb={catalog.server.max_upload_mb} {...props} />
 
-        <UploadCard maxMb={catalog.server.max_upload_mb} {...props} />
+      <SettingsCard catalog={catalog} request={props.request} onChange={props.onRequestChange} onReset={props.onReset} />
 
-        <SettingsCard catalog={catalog} request={props.request} onChange={props.onRequestChange} onReset={props.onReset} />
-
-        {finished.length > 0 && (
-          <section className="results">
-            <h2 className="section-title">Results</h2>
-            {finished.map((item) => (
-              <ResultCard
-                key={item.id}
-                item={item}
-                open={props.openResult === item.id}
-                onToggle={() => props.onOpenResult(props.openResult === item.id ? null : item.id)}
-              />
-            ))}
-          </section>
-        )}
+      <div className="convert-bar">
+        <span className="muted small">
+          {running
+            ? "Converting… Large PDFs can take a few minutes."
+            : pending.length === 0
+              ? queue.length > 0
+                ? "All files are converted. Add more to continue."
+                : "Add a document to start."
+              : `${pending.length} file${pending.length === 1 ? "" : "s"} ready.`}
+        </span>
+        <button
+          type="button"
+          className="btn primary convert-btn"
+          disabled={running || pending.length === 0 || nothingSelected}
+          onClick={props.onRun}
+        >
+          <SparkleIcon size={20} />
+          {running ? "Converting…" : pending.length > 1 ? `Convert ${pending.length} documents` : "Convert document"}
+          {!running && <ArrowRightIcon />}
+        </button>
       </div>
 
-      <aside className="convert-side">
-        <GetStarted
-          hasFiles={queue.length > 0}
-          pending={pending.length}
-          running={running}
-          done={finished.some((item) => item.state === "done")}
-          onRun={props.onRun}
-        />
-      </aside>
+      {finished.length > 0 && (
+        <section className="results">
+          <h2 className="section-title">Results</h2>
+          {finished.map((item) => (
+            <ResultCard
+              key={item.id}
+              item={item}
+              open={props.openResult === item.id}
+              onToggle={() => props.onOpenResult(props.openResult === item.id ? null : item.id)}
+            />
+          ))}
+        </section>
+      )}
     </div>
   );
 }
-
-const FORMATS: [Parameters<typeof FormatBadge>[0]["kind"], string][] = [
-  ["pdf", "PDF"],
-  ["word", "Word"],
-  ["excel", "Excel"],
-  ["ppt", "PowerPoint"],
-  ["image", "Images"],
-  ["html", "HTML"],
-  ["text", "Text"],
-];
 
 function UploadCard({ maxMb, queue, onAddFiles, onRemove }: Props & { maxMb: number }) {
   const input = useRef<HTMLInputElement>(null);
@@ -172,16 +159,6 @@ function UploadCard({ maxMb, queue, onAddFiles, onRemove }: Props & { maxMb: num
           ))}
         </ul>
       )}
-
-      <div className="formats-row">
-        <span className="formats-label">Supported formats</span>
-        {FORMATS.map(([kind, label]) => (
-          <span key={kind} className="format-chip">
-            <FormatBadge kind={kind} />
-            {label}
-          </span>
-        ))}
-      </div>
     </section>
   );
 }
@@ -194,7 +171,12 @@ function FileState({ item }: { item: QueueItem }) {
   return <span className={`tag tag-${status.tone}`}>{status.title}</span>;
 }
 
+// "dost" is not a Docling export format: it turns on the DOST outputs (all
+// tables as Markdown, sentences with English as CSV, images as a ZIP).
+const DOST = "dost";
+
 const OUTPUT_CARDS: [string, string, string, ReactNode][] = [
+  [DOST, "DOST", "Tables, sentences with English, images", <SparkleIcon key="dost" size={22} />],
   ["md", "Markdown", "Clean and readable", <MarkdownIcon key="md" />],
   ["html", "HTML", "Preserve structure", <CodeIcon key="html" size={22} />],
   ["json", "JSON", "Structured data", <BracesIcon key="json" />],
@@ -228,8 +210,11 @@ function SettingsCard({
   const quick = readQuick(request, catalog);
   const [moreFormats, setMoreFormats] = useState(false);
   const set = (change: Parameters<typeof writeQuick>[2]) => onChange(writeQuick(request, catalog, change));
+  const isOn = (id: string) => (id === DOST ? quick.dost : quick.outputs.includes(id));
   const toggleOutput = (id: string) =>
-    set({ outputs: quick.outputs.includes(id) ? quick.outputs.filter((item) => item !== id) : [...quick.outputs, id] });
+    id === DOST
+      ? set({ dost: !quick.dost })
+      : set({ outputs: quick.outputs.includes(id) ? quick.outputs.filter((item) => item !== id) : [...quick.outputs, id] });
 
   const engines: [Engine, string][] = [
     ["sarvam", "Sarvam"],
@@ -261,7 +246,7 @@ function SettingsCard({
           </div>
           <div className="output-cards">
             {OUTPUT_CARDS.map(([id, title, help, icon]) => {
-              const on = quick.outputs.includes(id);
+              const on = isOn(id);
               return (
                 <button
                   key={id}
@@ -300,7 +285,7 @@ function SettingsCard({
               })}
             </div>
           )}
-          {quick.outputs.length === 0 && <span className="text-danger small">Select at least one format.</span>}
+          {quick.outputs.length === 0 && !quick.dost && <span className="text-danger small">Select at least one format.</span>}
         </div>
 
         <div className="ocr-block">
@@ -314,7 +299,7 @@ function SettingsCard({
               ) : (
                 <span className="text-warn small">Sarvam has no API key on the server. Add it to apps/catalyst/.env.</span>
               ))}
-            {quick.engine === "custom" && <span className="muted small">Set in Settings.</span>}
+            {quick.engine === "custom" && <span className="muted small">A custom OCR setup is in use.</span>}
           </Setting>
         </div>
       </div>
@@ -371,80 +356,10 @@ function SettingsCard({
           <Setting icon={<PagesIcon />} title="HTML per page" help="One HTML file per page with links between pages.">
             <Toggle checked={quick.htmlPerPage} onChange={(htmlPerPage) => set({ htmlPerPage })} />
           </Setting>
-          <Setting
-            icon={<SparkleIcon />}
-            title="Tables, sentences and images"
-            help="All tables in one Markdown file, every sentence with its English translation in a CSV file, every image as its own file, and a report of what is missing."
-          >
-            <Toggle checked={quick.dost} onChange={(dost) => set({ dost })} />
-          </Setting>
         </div>
       </div>
 
       {quick.pipelineNote && <div className="notice">{quick.pipelineNote}</div>}
-    </section>
-  );
-}
-
-function GetStarted({
-  hasFiles,
-  pending,
-  running,
-  done,
-  onRun,
-}: {
-  hasFiles: boolean;
-  pending: number;
-  running: boolean;
-  done: boolean;
-  onRun: () => void;
-}) {
-  const current = !hasFiles ? 1 : running || done ? 3 : 2;
-  const steps: [string, string][] = [
-    ["Upload", "Add your document files"],
-    ["Configure", "Choose output format and settings"],
-    ["Convert", "Get clean, structured results"],
-  ];
-  return (
-    <section className="card get-started">
-      <header className="get-started-head">
-        <span className="card-head-icon soft">
-          <FileIcon size={24} />
-        </span>
-        <div>
-          <h2>Get started</h2>
-          <p className="muted small">Upload a document and configure settings to extract clean, structured output.</p>
-        </div>
-      </header>
-      <ol className="steps">
-        {steps.map(([title, help], index) => {
-          const number = index + 1;
-          const state = number < current || (number === 3 && done && !running) ? "done" : number === current ? "active" : "";
-          return (
-            <li key={title} className={`step ${state}`}>
-              <span className="step-number">{state === "done" ? <CheckIcon size={14} /> : number}</span>
-              <span className="step-text">
-                <strong>{title}</strong>
-                <span className="muted small">{help}</span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      <button type="button" className="btn primary convert-btn" disabled={running || pending === 0} onClick={onRun}>
-        <SparkleIcon size={20} />
-        {running ? "Converting…" : pending > 1 ? `Convert ${pending} documents` : "Convert document"}
-        {!running && <ArrowRightIcon />}
-      </button>
-      <p className="muted small center-text">
-        {running
-          ? "Large PDFs can take a few minutes."
-          : pending === 0
-            ? hasFiles
-              ? "All files are converted. Add more to continue."
-              : "Add a document to start."
-            : `${pending} file${pending === 1 ? "" : "s"} ready.`}
-      </p>
     </section>
   );
 }
