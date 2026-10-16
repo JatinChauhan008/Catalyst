@@ -262,7 +262,52 @@ def test_sarvam_chat_style_answers_keep_only_the_translation() -> None:
 
     chatty = 'The translation of the given Odia text "ନନଙ୍ଗଳିଆ" from Odia to English is:\n\n"Nangalia."'
     assert _clean(chatty) == "Nangalia."
+    preamble = 'Here\'s the translation of the Sanskrit text, following your guidelines: "Having eaten."'
+    assert _clean(preamble) == "Having eaten."
     assert _clean("  The flower of the creeper.  ") == "The flower of the creeper."
+
+
+def test_a_looping_translation_is_tried_again_and_never_kept(fake_sarvam) -> None:
+    from catalyst.dost.problems import find_problems
+    from catalyst.dost.translate import SarvamTranslator
+
+    sentences = ["LOOP हिमाचल में वर्षा हुई।", "LOOPALL शिमला में वर्षा हुई।"]
+    translator = SarvamTranslator(api_key="test-key", base_url=fake_sarvam.base_url)
+    second_try, broken = translator.translate_all(sentences, "hi-IN")
+
+    # The other model (mayura) gave a good translation.
+    assert second_try.status == "translated"
+    assert second_try.text == "EN: LOOP हिमाचल में वर्षा हुई।"
+    # Every try looped: the translation is empty, not the loop.
+    assert (broken.status, broken.text) == ("failed", "")
+    assert 'repeats "and having considered the earth"' in (broken.detail or "")
+
+    problems = find_problems(sentences, [second_try, broken], [9, 9])
+    assert [p.kind for p in problems] == ["retranslated", "not_translated"]
+    assert "discarded" in problems[1].reason and problems[1].action
+
+
+def test_sentences_in_another_script_than_the_language_are_flagged() -> None:
+    from catalyst.dost.problems import find_problems, wrong_script_pages
+    from catalyst.dost.translate import Translation
+
+    # From a real Assamese scan: Sarvam OCR read some pages as Devanagari.
+    sentences = [
+        "গোটা দাগ ইস্তফা বাবে বন্দবস্তৰ পৰা বাদ হলে।",  # Assamese, Bengali script
+        "छैतलाव्व वालिद्धित निणिराथवाए आमि विट्ठाल ।",  # Devanagari nonsense
+    ]
+    translations = [
+        Translation(text="If the whole plot is resigned.", status="translated"),
+        Translation(text="Chaitlav Vaalidhit.", status="translated"),
+    ]
+    problems = find_problems(sentences, translations, [3, 4], "as-IN")
+
+    assert [(p.row, p.kind) for p in problems] == [(3, "ocr_suspect")]
+    assert "Devanagari script, but as-IN is written in Bengali" in problems[0].reason
+    [issue] = wrong_script_pages(problems)
+    assert issue.message.startswith("The OCR text of pages 4 (1 sentences)")
+    # The same Devanagari sentence is fine in a Hindi document.
+    assert find_problems(sentences[1:], translations[1:], [4], "hi-IN") == []
 
 
 def test_translation_waits_out_a_rate_limit(fake_sarvam) -> None:

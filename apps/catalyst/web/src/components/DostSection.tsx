@@ -7,6 +7,8 @@ const KIND_LABELS: Record<SentenceProblemKind, string> = {
   translation_off: "Translation off",
   numbers_differ: "Numbers missing",
   language_assumed: "Language assumed",
+  retranslated: "Second try",
+  ocr_suspect: "OCR text suspect",
 };
 
 const KIND_TONE: Record<SentenceProblemKind, "danger" | "warn" | "info"> = {
@@ -15,6 +17,8 @@ const KIND_TONE: Record<SentenceProblemKind, "danger" | "warn" | "info"> = {
   translation_off: "warn",
   numbers_differ: "warn",
   language_assumed: "info",
+  retranslated: "info",
+  ocr_suspect: "warn",
 };
 
 const PAGE_SIZE = 50;
@@ -47,17 +51,20 @@ export function DostSection({ report, outputs }: { report: DostReport; outputs: 
   const groups = useMemo(() => {
     const byKey = new Map<string, Group>();
     for (const problem of problems) {
-      const key = `${problem.kind}|${problem.reason}`;
-      const group = byKey.get(key) ?? { kind: problem.kind, reason: problem.reason, action: problem.action, rows: [] };
+      const summary = problem.summary || problem.reason;
+      const key = `${problem.kind}|${summary}`;
+      const group = byKey.get(key) ?? { kind: problem.kind, reason: summary, action: problem.action, rows: [] };
       group.rows.push(problem.row);
       byKey.set(key, group);
     }
     const order: SentenceProblemKind[] = [
+      "ocr_suspect",
       "not_translated",
       "language_not_supported",
       "translation_off",
       "numbers_differ",
       "language_assumed",
+      "retranslated",
     ];
     return [...byKey.values()].sort(
       (a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || b.rows.length - a.rows.length,
@@ -136,7 +143,7 @@ export function DostSection({ report, outputs }: { report: DostReport; outputs: 
             {groups.map((group) => (
               <li key={`${group.kind}|${group.reason}`} className={`dost-attn dost-attn-${KIND_TONE[group.kind]}`}>
                 <strong>
-                  {plural(group.rows.length, "sentence")}: {KIND_LABELS[group.kind].toLowerCase()}
+                  {KIND_LABELS[group.kind]}: {plural(group.rows.length, "sentence")}
                 </strong>
                 <span>{group.reason}</span>
                 {group.action && <span className="muted">What to do: {group.action}</span>}
@@ -278,9 +285,11 @@ function ProblemTable({ problems }: { problems: SentenceProblem[] }) {
                 <td className="num">{p.row}</td>
                 <td className="num">{p.page ?? "–"}</td>
                 <td dir="auto" className="dost-text">
-                  {p.original}
+                  <div className="dost-text-box">{p.original}</div>
                 </td>
-                <td className="dost-text">{p.translation || <span className="muted">(empty)</span>}</td>
+                <td className="dost-text">
+                  <div className="dost-text-box">{p.translation || <span className="muted">(empty)</span>}</div>
+                </td>
                 <td>
                   <span className={`dost-badge dost-badge-${KIND_TONE[p.kind]}`}>{KIND_LABELS[p.kind]}</span>
                   <div className="small">{p.reason}</div>

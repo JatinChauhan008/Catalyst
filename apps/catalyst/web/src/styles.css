@@ -391,6 +391,8 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .dost-table tr:last-child td { border-bottom: none; }
 .dost-table .num { color: var(--muted); white-space: nowrap; }
 .dost-text { min-width: 180px; max-width: 360px; overflow-wrap: anywhere; }
+/* A very long sentence scrolls inside its cell instead of making the row huge. */
+.dost-text-box { max-height: 12em; overflow-y: auto; }
 .dost-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; margin-bottom: 3px; }
 .dost-badge-danger { background: var(--danger-soft); color: var(--danger); }
 .dost-badge-warn { background: var(--warn-soft); color: var(--warn); }

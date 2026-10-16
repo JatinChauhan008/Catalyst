@@ -132,6 +132,8 @@ SentenceProblemKind = Literal[
     "translation_off",  # translation off or no key: empty
     "numbers_differ",  # translated, but numbers of the original are missing
     "language_assumed",  # translated, but in a language that Catalyst assumed
+    "retranslated",  # the first translation was broken; this one is a second try
+    "ocr_suspect",  # the sentence is in another script than the document language
 ]
 
 
@@ -144,6 +146,10 @@ class SentenceProblem(BaseModel):
     translation: str
     kind: SentenceProblemKind
     reason: str = Field(description="What went wrong, in plain words.")
+    summary: str = Field(
+        default="",
+        description="The reason without the details of this sentence, to group sentences.",
+    )
     action: str | None = Field(default=None, description="What the user can do.")
     detail: str | None = Field(
         default=None, description="The technical message, for example the API error."

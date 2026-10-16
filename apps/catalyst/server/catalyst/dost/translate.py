@@ -259,16 +259,13 @@ class SarvamTranslator:
             )
         assert language.code is not None and language.model is not None
         try:
-            pieces = [
-                self._request(piece, language.code, language.model)
-                for piece in _pieces(sentence, _LIMITS[language.model])
-            ]
+            text, detected = self._attempt(
+                sentence, language.code, language.model, _LIMITS[language.model]
+            )
         except (requests.RequestException, RuntimeError, ValueError) as exc:
             return Translation(
                 text="", status="failed", language=language.code, detail=str(exc)
             )
-        text = " ".join(piece for piece, _ in pieces).strip()
-        detected = pieces[0][1] if pieces else language.code
         if not text:
             return Translation(
                 text="",
@@ -276,7 +273,56 @@ class SarvamTranslator:
                 language=detected,
                 detail="Sarvam returned an empty translation.",
             )
-        return Translation(text=text, status="translated", language=detected)
+        broken = broken_reason(sentence, text)
+        if broken is None:
+            return Translation(text=text, status="translated", language=detected)
+
+        # A language model can loop ("and having considered the earth, and
+        # having considered the earth, ...") or add its own words. Try the other
+        # model, then shorter pieces; never keep a broken translation.
+        code = detected if detected != "auto" else language.code
+        tries: list[tuple[str, str, int]] = []
+        if code in _MAYURA_LANGUAGES and language.model != "mayura:v1":
+            tries.append((code, "mayura:v1", _LIMITS["mayura:v1"]))
+        if (
+            code in _SARVAM_TRANSLATE_LANGUAGES
+            and language.model != "sarvam-translate:v1"
+        ):
+            tries.append((code, "sarvam-translate:v1", _LIMITS["sarvam-translate:v1"]))
+        tries.append((language.code, language.model, _SHORT_PIECE_CHARS))
+        for source, model, limit in tries:
+            try:
+                again, found = self._attempt(sentence, source, model, limit)
+            except (requests.RequestException, RuntimeError, ValueError):
+                continue
+            if again and broken_reason(sentence, again) is None:
+                how = (
+                    "in shorter pieces"
+                    if limit == _SHORT_PIECE_CHARS
+                    else f"with {model}"
+                )
+                return Translation(
+                    text=again,
+                    status="translated",
+                    language=found,
+                    detail=f"{RETRANSLATED_PREFIX} ({broken}); translated again {how}.",
+                )
+        return Translation(
+            text="",
+            status="failed",
+            language=detected,
+            detail=f"{BROKEN_PREFIX}: {broken}. It was discarded.",
+        )
+
+    def _attempt(
+        self, sentence: str, source: str, model: str, limit: int
+    ) -> tuple[str, str]:
+        """Translate a sentence in pieces of at most `limit` characters."""
+        pieces = [
+            self._request(piece, source, model) for piece in _pieces(sentence, limit)
+        ]
+        text = " ".join(piece for piece, _ in pieces).strip()
+        return text, pieces[0][1] if pieces else source
 
     def _request(self, text: str, source: str, model: str) -> tuple[str, str]:
         payload = {
@@ -363,12 +409,49 @@ _CHATTY = re.compile(
 )
 
 
+# For some inputs Sarvam opens with its own words: 'Here's the translation of
+# the Sanskrit text, following your guidelines: "..."'.
+_PREAMBLE = re.compile(
+    r"^\s*(?:here(?:'s|\s+is)|below\s+is|sure[,!.]?\s+here(?:'s|\s+is))\b"
+    r"[^:\n]{0,200}\btranslation\b[^:\n]{0,200}:\s*(?P<answer>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _clean(text: str) -> str:
-    match = _CHATTY.match(text)
+    match = _CHATTY.match(text) or _PREAMBLE.match(text)
     if match is None:
         return text.strip()
     answer = " ".join(match.group("answer").split())
     return answer.strip("\"'“” ")
+
+
+RETRANSLATED_PREFIX = "Sarvam's first translation was broken"
+BROKEN_PREFIX = "Sarvam's translation was broken"
+# Pieces for the last try of a broken translation.
+_SHORT_PIECE_CHARS = 250
+# A run of this many words that comes back again and again is a loop.
+_LOOP_WORDS = 5
+_LOOP_MIN_REPEATS = 4
+# English is seldom this many times longer than the Indic original.
+_MAX_LENGTH_RATIO = 4.0
+_MIN_SUSPECT_CHARS = 300
+
+
+def broken_reason(original: str, translation: str) -> str | None:
+    """Why a translation is broken (a loop, far too long), or None."""
+    words = re.findall(r"\w+", translation.lower())
+    if len(words) >= _LOOP_WORDS * _LOOP_MIN_REPEATS:
+        runs = Counter(
+            tuple(words[i : i + _LOOP_WORDS])
+            for i in range(len(words) - _LOOP_WORDS + 1)
+        )
+        run, repeats = runs.most_common(1)[0]
+        if repeats >= _LOOP_MIN_REPEATS and repeats * _LOOP_WORDS >= 0.4 * len(words):
+            return f'it repeats "{" ".join(run)}" {repeats} times'
+    if len(translation) > max(_MIN_SUSPECT_CHARS, _MAX_LENGTH_RATIO * len(original)):
+        return f"it has {len(translation)} characters for a sentence of {len(original)}"
+    return None
 
 
 def _pieces(sentence: str, limit: int) -> list[str]:

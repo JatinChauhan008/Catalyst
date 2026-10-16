@@ -23,6 +23,7 @@ from catalyst.dost.problems import (
     find_problems,
     summarize,
     write_problems,
+    wrong_script_pages,
 )
 from catalyst.dost.sentences import CollectedText, collect_sentences
 from catalyst.dost.tables_md import tables_markdown
@@ -142,8 +143,12 @@ def run_dost(source: DostInput, settings: DostSettings, target: Path) -> DostRep
         )
 
     problems = find_problems(
-        originals, translations, [sentence.page for sentence in collected.sentences]
+        originals,
+        translations,
+        [sentence.page for sentence in collected.sentences],
+        language,
     )
+    issues += wrong_script_pages(problems)
     write_problems(problems, target / PROBLEMS_FILE)
     sentence_counts = SentenceCounts(
         sentences=len(originals),

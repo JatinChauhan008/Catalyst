@@ -114,6 +114,19 @@ class FakeSarvam:
                     },
                     status_code=422,
                 )
+            # "LOOP": sarvam-translate:v1 loops like a language model can;
+            # "LOOPALL": every model loops.
+            if "LOOPALL" in text or (
+                "LOOP" in text and body.get("model") == "sarvam-translate:v1"
+            ):
+                loop = "and having considered the earth, " * 40
+                return JSONResponse(
+                    {
+                        "translated_text": "Here's the translation of the text, "
+                        f'following your guidelines: "{loop}"',
+                        "source_language_code": body["source_language_code"],
+                    }
+                )
             if "DROP" in text:
                 text = "".join(char for char in text if not char.isdigit())
             source = body["source_language_code"]

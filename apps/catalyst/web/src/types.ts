@@ -137,7 +137,9 @@ export type SentenceProblemKind =
   | "language_not_supported"
   | "translation_off"
   | "numbers_differ"
-  | "language_assumed";
+  | "language_assumed"
+  | "retranslated"
+  | "ocr_suspect";
 
 /** One sentence without a translation, or with one to check. */
 export interface SentenceProblem {
@@ -147,6 +149,7 @@ export interface SentenceProblem {
   translation: string;
   kind: SentenceProblemKind;
   reason: string;
+  summary?: string;
   action: string | null;
   detail: string | null;
 }
