@@ -2,9 +2,27 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "extracta",
+      "name": "catalyst",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "--no-sync", "uvicorn", "extracta.app:app", "--app-dir", "apps/extracta/server", "--port", "8000"],
+      "runtimeArgs": ["run", "--no-sync", "uvicorn", "catalyst.app:app", "--app-dir", "apps/catalyst/server", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "extracta-no-sarvam",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--no-sync", "uvicorn", "extracta.app:app", "--app-dir", ".claude/worktrees/extracta-no-sarvam/apps/extracta/server", "--port", "8001"],
+      "port": 8001
+    },
+    {
+      "name": "extracta-main",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--no-sync", "uvicorn", "extracta.app:app", "--app-dir", ".claude/worktrees/extracta-main/apps/extracta/server", "--port", "8002"],
+      "port": 8002
+    },
+    {
+      "name": "extracta-sarvam-separation",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--no-sync", "uvicorn", "extracta.app:app", "--app-dir", ".claude/worktrees/extracta-sarvam-separation/apps/extracta/server", "--port", "8000"],
       "port": 8000
     }
   ]
